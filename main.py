@@ -1,82 +1,68 @@
-# # Box2d
-# git clone https://github.com/pybox2d/pybox2d
-# cd pybox2d/
-# python setup.py clean
-# python setup.py build
-# python setup.py install
-# pip install box2d-py  | bindings to library
-import Box2D
-import gym # openAi gym
+# pip install box2d-py
+import Box2D, os, shutil, datetime, time, random, sys, torch, argparse, gym
 from gym import envs
 import numpy as np
-import torch
-import os, shutil, datetime, time, random, sys
-import tensorboardX
 import torch.multiprocessing as mp
-import argparse
 from visualdl import LogWriter
 
 from agent import Agent
 
-# this somehow fixes multiprocessing cuda error
-#os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-#os.environ["CUDA_VISIBLE_DEVICES"]=""
-
 parser = argparse.ArgumentParser()
-parser.add_argument('-m', '--mode', type=int)
-parser.add_argument('-d', '--device')
+parser.add_argument('-m', '--mode', type=int, default=1, help='0 - compare two models, 1 - run single model, 2 - DQN vs DDQN comparison, 3 - multiprocess testing')
+parser.add_argument('-d', '--device', default='cpu', help='cpu or cuda')
+
+parser.add_argument('-e', '--env_name', default='CartPole-v0',  help='OpenAI game enviroment name')
+parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
+parser.add_argument('-bs', '--batch_size', type=int, default=32)
+
+parser.add_argument('--has_normalized_state', default=True, help='Normalize state vector in forward and inverse models? true | false')
+parser.add_argument('--epsilon_decay', type=float, default=0.001, help='Epslion decay for exploration / explotation policy')
+parser.add_argument('--epsilon_floor', type=float, default=0.01, help='Where epsilon stops to decay')
+parser.add_argument('--g', '--gamma', type=float, default=0.95, help='Hyperparameter for DQN')
+parser.add_argument('--ne', '--n_episodes', type=int, default=100, help='Number of episodes (games) to be played')
+parser.add_argument('--nf', '--n_frames', type=int, default=9999, help='Number of frames per one episode')
+
+parser.add_argument('--has_curiosity', type=bool, default=False)
+parser.add_argument('--beta_curiosity', type=float, default=-1, help='Beta hyperparameter for curiosity module')
+parser.add_argument('--lambda_curiosity', type=float, default=-1, help='Lambda hyperparameter for curiosity module')
+parser.add_argument('--curiosity_scale', type=float, default=1, help='Intrinsic reward scale factor')
+parser.add_argument('--encoder_1st_layer_out', type=int, default=5)
+parser.add_argument('--encoder_2st_layer_out', type=int, default=10)
+parser.add_argument('--encoder_3st_layer_out', type=int, default=15)
+
+parser.add_argument('--has_ddqn', type=bool, default=False, help='Is double DQN enabled?')
+parser.add_argument('--target_update', type=float, default=10, help='Update target network after n steps')
+
 args = parser.parse_args()
 
-#device = torch.device("cuda" if torch.cuda.is_available() else "cpu") 
+logdir = "./logs"
+logger = LogWriter(logdir, sync_cycle=100)
+
 if torch.cuda.is_available():
     print('cuda detected')
-    
-device = "cpu"
-env_name = 'CartPole-v0'
-batch_size = 32
-mode = args.mode
 
-folder = {
+mode = { 
         0: 'comparison',
         1: 'evaluate',
         2: 'dqn_vs_ddqn',
         3: 'multiprocess'
     }
-print('Running mode: {}'.format(folder[mode]))
-path_tf_log = 'tf_log/' + folder[mode] + "/" + env_name + "_" + str(batch_size)
-
-if os.path.exists(path_tf_log):
-    shutil.rmtree(path_tf_log)
-if not os.path.exists(path_tf_log):
-    os.makedirs(path_tf_log)
-
-tensor_board_writer = tensorboardX.SummaryWriter(log_dir=path_tf_log)
 
 def main():
+    print('Running mode: {}'.format(mode[args.mode]))
     run = {
         0: comparison,
         1: evaluate,
         2: dqn_vs_ddqn,
         3: multiprocess,
         }
+    
+    run[args.mode]()
 
-    run[mode]()
-
-
-def writeBoard(tag, scalar, step):
-    tensor_board_writer.add_scalar(tag=tag, scalar_value=scalar, global_step=step)
-
-def writeDict(tag, dict_scalars, step):
-    tensor_board_writer.add_scalars(main_tag=tag, tag_scalar_dict=dict_scalars, global_step=step)
-
-
-
-# This mode compares agents
+# This mode compares two agents
 def comparison():
-    n_episodes = 301
-    decay = 0.0001
-    agent_curious = Agent(device, env_name, batch_size=batch_size, curiosity=True, ddqn=False, beta=0.2, lamda=0.8, epsilon_decay=decay)
-    agent_dumb = Agent(device, env_name, batch_size=batch_size, curiosity=False, ddqn=False, epsilon_decay=decay)
+    agent_curious = Agent(args)
+    agent_dumb = Agent(args)
 
     for i_episode in range(1, n_episodes):
         agent_curious.reset_env()
@@ -114,20 +100,19 @@ def comparison():
 
 # run just one agent
 def evaluate():
-    logdir = "./tmp"
-    logger = LogWriter(logdir, sync_cycle=10)
-    with logger.mode("train"):
-        logger_ers = logger.scalar("scalars/ers")
 
+    
+    # this line causes core dump
+    #with logger.mode("train"):
+    #    logger_ers = logger.scalar("scalars/ers")
 
     env_name='MountainCar-v0'
     device = args.device
     decay = 0.00002
-    agent = Agent(device, env_name, batch_size=16, epsilon_decay=decay, beta=0.8, lamda=0.2, curiosity=True, ddqn=True, lr=0.001)
-    agent.lr
+    agent = Agent(args)
     n_episodes = 500
     start_all = time.time()
-
+   
     for i_episode in range(1, n_episodes):
         start = time.time()
         agent.reset_env()

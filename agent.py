@@ -57,36 +57,28 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
 
 #-------------------- AGENT --------------------------
 class Agent(nn.Module):
-    def __init__(self, device, env_name, batch_size, curiosity, ddqn=False, beta=0, lamda=0, epsilon_decay=0.00001, update_target_every=10, lr=0.001):
+    def __init__(self, args):
         super().__init__()
 
+        self.check_args(args)
+        self.args = args
+
         # --------- ENVIROMENT ----------
-        self.env = gym.make(env_name)
+        self.env = gym.make(self.args.env_name)
         self.current_state = self.env.reset()
         self.n_states = self.env.observation_space.shape[0]
         self.n_actions = self.env.action_space.n
 
-        self.device = device
-        self.curiosity = curiosity
-        self.ddqn = ddqn
-        self.update_target_every = update_target_every
-
-        self.dqn_model = self.build_dqn_model().to(device)
-        self.target_model = self.build_dqn_model().to(device)
+        # MODELS
+        self.dqn_model = self.build_dqn_model().to(self.args.device)
+        self.target_model = self.build_dqn_model().to(self.args.device)
         self.update_target()
         self.dqn_model_loss_fn = nn.MSELoss()
 
-        # Epsilon greedy
-        self.epsilon = 1.0
-        self.epsilon_floor = 0.01
-        self.epsilon_decay = epsilon_decay
+        self.current_episode = 1
+        self.total_steps = 1
 
-        self.gamma = 0.95  # Discounting rate
-        self.lr = lr
-        self.batch_size = batch_size
-
-        if curiosity:
-            self.encoded_state_out = 3
+        if self.args.has_curiosity:
             self.encoder_model = self.build_encoder_model().to(self.device)
             self.inverse_model = self.build_inverse_model().to(self.device)
             self.forward_model = self.build_forward_model().to(self.device)
@@ -98,10 +90,6 @@ class Agent(nn.Module):
 
             self.optimizer = torch.optim.Adam(params=params, lr=self.lr)
             self.inverse_model_loss_fn = nn.MSELoss()
-            self.curiosity_scale = 1
-
-            self.beta = beta
-            self.lamda = lamda
 
             self.loss_inverse = []
             self.cos_distance = []
@@ -118,14 +106,17 @@ class Agent(nn.Module):
         self.memory = Memory(100000)
         self.loss_dqn = []
         self.ers = []
-        self.current_episode = 1
-
-        self.total_steps = 1
-
+        
         # ----- EPISODE BUFFER  --------
         self.e_loss_dqn = []
         self.e_reward = 0
 
+    def check_args(self, args):
+        if args.has_curiosity:
+            if not args.beta_curiosity or not args.lambda_curiosity:
+                print("Curiosity enabled but lambda or beta value hasnt been set!")
+                os._exit(1)
+    
     def build_dqn_model(self):
         return torch.nn.Sequential(
             nn.Linear(in_features=self.n_states, out_features=64),
@@ -251,15 +242,16 @@ class Agent(nn.Module):
         return action_idx, act_vector
 
     def get_inverse_and_forward_loss(self, state, next_state, recorded_action):
-        # states have to be encoded first
-        # normalize states
-        state = (state - np.min(state))/np.ptp(state)
-        next_state = (next_state - np.min(next_state))/np.ptp(next_state)
+        # State normalization
+        if self.args.has_normalized_state:
+            state /=  state.sum(axis=1)[:, np.newaxis]
+            next_state = next_state.sum(axis=1)[:, np.newaxis]
+
+        # State encoding
         state_tensor = torch.FloatTensor(state).to(self.device)
         next_state_tensor = torch.FloatTensor(next_state).to(self.device)
         encoded_state = self.encoder_model(state_tensor)
         encoded_next_state = self.encoder_model(next_state_tensor)
-
 
         # --------------- INVERSE MODEL -----------------------
         # transition from s to s_t+1 concatenated column-wise
@@ -274,7 +266,6 @@ class Agent(nn.Module):
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
         recorded_action_tensor = torch.FloatTensor(recorded_action).to(self.device)
         cat_action_state = torch.cat((encoded_state, recorded_action_tensor), dim=1)
-        #TODO normalize?
 
         pred_next_state = self.forward_model(cat_action_state)
         loss_cos = F.cosine_similarity(pred_next_state, encoded_next_state, dim=1)  
