@@ -12,6 +12,12 @@ from sum_tree import SumTree
 def average(x):
     return sum(x) / len(x)
 
+def normalize_rows(x):
+    for row_idx in range(x.shape[0]):
+        v = x[row_idx, :]   
+        x[row_idx, :] = (v - v.min()) / (v.max() - v.min())
+    return x
+
 #-------------------- MEMORY --------------------------
 class Memory:   # stored as ( s, a, r, s_ ) in SumTree
     PER_e = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
@@ -54,6 +60,27 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
         p = self._getPriority(error)
         self.tree.update(idx, p)
 
+class EncoderModule(nn.Module):
+    def __init__(self, args, n_states):
+        super(EncoderModule, self).__init__()
+
+        self.seq = torch.nn.Sequential(
+            nn.Linear(in_features=n_states, out_features=args.encoder_1_layer_out),
+            nn.ReLU(),
+            nn.Linear(in_features=args.encoder_1_layer_out, out_features=args.encoder_2_layer_out),
+            nn.ReLU(),
+            nn.Linear(in_features=args.encoder_2_layer_out, out_features=args.encoder_3_layer_out),
+            nn.Tanh()
+        ) 
+
+    def forward(self, x):
+        embedding = self.seq(x)
+        
+        # L2 normalization
+        norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
+        output_norm = embedding / norm
+        return output_norm
+
 
 #-------------------- AGENT --------------------------
 class Agent(nn.Module):
@@ -75,20 +102,19 @@ class Agent(nn.Module):
         self.update_target()
         self.dqn_model_loss_fn = nn.MSELoss()
 
-        self.current_episode = 1
-        self.total_steps = 1
+        self.current_episode = 0
+        self.total_steps = 0
+        self.epsilon = 1.0
 
         if self.args.has_curiosity:
-            self.encoder_model = self.build_encoder_model().to(self.device)
-            self.inverse_model = self.build_inverse_model().to(self.device)
-            self.forward_model = self.build_forward_model().to(self.device)
+            self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
+            self.inverse_model = self.build_inverse_model().to(self.args.device)
+            self.forward_model = self.build_forward_model().to(self.args.device)
 
-            params = list(self.inverse_model.parameters())
-            params = params + list(self.encoder_model.parameters())
-            params = params + list(self.forward_model.parameters())
-            params = params + list(self.dqn_model.parameters())
+            # \ is not a division operator!
+            params = list(self.inverse_model.parameters()) + list(self.encoder_model.parameters()) + list(self.forward_model.parameters()) + list(self.dqn_model.parameters())
 
-            self.optimizer = torch.optim.Adam(params=params, lr=self.lr)
+            self.optimizer = torch.optim.Adam(params=params, lr=self.args.learning_rate)
             self.inverse_model_loss_fn = nn.MSELoss()
 
             self.loss_inverse = []
@@ -99,11 +125,9 @@ class Agent(nn.Module):
             self.e_cos_distance = []
             self.e_loss_combined = []
         else:
-            params = list(self.dqn_model.parameters())
-            params = params + list(self.target_model.parameters())
-            self.optimizer = torch.optim.Adam(params=params, lr= self.lr)
+            self.optimizer = torch.optim.Adam(params=self.dqn_model.parameters(), lr = self.args.learning_rate)
 
-        self.memory = Memory(100000)
+        self.memory = Memory(capacity=100000)
         self.loss_dqn = []
         self.ers = []
         
@@ -127,33 +151,31 @@ class Agent(nn.Module):
         )
 
     def build_encoder_model(self):
-        s_count = self.n_states
         return torch.nn.Sequential(
-            nn.Linear(in_features=s_count, out_features=s_count*2),
+            nn.Linear(in_features=self.n_states, out_features=self.args.encoder_1_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=s_count*2, out_features=s_count*3),
+            nn.Linear(in_features=self.args.encoder_1_layer_out, out_features=self.args.encoder_2_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=s_count*3, out_features=s_count*self.encoded_state_out)
+            nn.Linear(in_features=self.args.encoder_2_layer_out, out_features=self.args.encoder_3_layer_out)
         ) 
 
     def build_inverse_model(self):
-        x = 2 # multiply by 2 because we have 2 concated vectors
+        # multiply by 2 because we have 2 concated vectors
         return torch.nn.Sequential(
-            nn.Linear(in_features=self.n_states*self.encoded_state_out*x, out_features=self.n_states*self.encoded_state_out*2*x),
+            nn.Linear(in_features=self.args.encoder_3_layer_out * 2, out_features=self.args.inverse_1_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=self.n_states*self.encoded_state_out*2*x, out_features=self.n_states*self.encoded_state_out*3*x),
+            nn.Linear(in_features=self.args.inverse_1_layer_out, out_features=self.args.inverse_2_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=self.n_states*self.encoded_state_out*3*x, out_features=self.n_actions)
+            nn.Linear(in_features=self.args.inverse_2_layer_out, out_features=self.n_actions)
         )
 
     def build_forward_model(self):
-        encoded_n = self.n_states*self.encoded_state_out
         return torch.nn.Sequential(
-            nn.Linear(in_features=encoded_n + self.n_actions, out_features=encoded_n*2), # input actions are one hot encoded
+            nn.Linear(in_features=self.args.encoder_3_layer_out + self.n_actions, out_features=self.args.forward_1_layer_out), # input actions are one hot encoded
             nn.ReLU(),
-            nn.Linear(in_features=encoded_n*2, out_features=encoded_n*3),
+            nn.Linear(in_features=self.args.forward_1_layer_out, out_features=self.args.forward_2_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=encoded_n*3, out_features=encoded_n)
+            nn.Linear(in_features=self.args.forward_2_layer_out, out_features=self.args.encoder_3_layer_out)
         )
 
     def play_step(self):
@@ -162,18 +184,18 @@ class Agent(nn.Module):
         done = 0.0 if is_done else 1.0
         transition = [self.current_state, act_values, reward, next_state, done]
         
-        self.memory.add(10000, transition)
+        self.memory.add(error=10000, transition=transition) # because its initially unknown and has to be high priority
         self.e_reward += reward
-       
-        self.current_episode += 1
         self.current_state = next_state
 
-        if self.ddqn:
+        if self.args.has_ddqn:
             if self.total_steps % self.update_target_every == 0:
                 self.update_target()
 
-        if self.current_episode > 3:
-            if self.curiosity:
+        has_collected = self.memory.tree.n_entries > self.args.batch_size
+        
+        if has_collected:
+            if self.args.has_curiosity:
                 dqn, inv, cos, com = self.replay()
                 self.e_loss_inverse.append(inv)
                 self.e_cos_distance.append(cos)
@@ -183,14 +205,12 @@ class Agent(nn.Module):
             
             self.e_loss_dqn.append(dqn)
         
-
-
-        if is_done:
+        if is_done and has_collected:
             dqn_avg = average(self.e_loss_dqn)
             self.loss_dqn.append(dqn_avg)
             self.ers.append(self.e_reward)
 
-            if self.curiosity:
+            if self.args.has_curiosity:
                 inv_avg = average(self.e_loss_inverse)
                 cos_avg = average(self.e_cos_distance)
                 com_avg = average(self.e_loss_combined)
@@ -206,7 +226,7 @@ class Agent(nn.Module):
         self.current_state = self.env.reset()
         self.e_loss_dqn.clear()
         self.e_reward = 0
-        if self.curiosity:
+        if self.args.has_curiosity:
             self.e_loss_inverse.clear()
             self.e_loss_combined.clear()
             self.e_cos_distance.clear()
@@ -231,7 +251,7 @@ class Agent(nn.Module):
             return action_idx, act_vector
 
         # Exploitation
-        X = torch.tensor(self.current_state).float().to(self.device)
+        X = torch.tensor(self.current_state).float().to(self.args.device)
         act_values = self.dqn_model(X)  # Predict action based on state
         act_values = act_values.cpu().detach().numpy()
 
@@ -242,14 +262,14 @@ class Agent(nn.Module):
         return action_idx, act_vector
 
     def get_inverse_and_forward_loss(self, state, next_state, recorded_action):
-        # State normalization
+        # Row wise sate min-max normalization 
         if self.args.has_normalized_state:
-            state /=  state.sum(axis=1)[:, np.newaxis]
-            next_state = next_state.sum(axis=1)[:, np.newaxis]
+            state = normalize_rows(state)
+            next_state = normalize_rows(next_state)
 
         # State encoding
-        state_tensor = torch.FloatTensor(state).to(self.device)
-        next_state_tensor = torch.FloatTensor(next_state).to(self.device)
+        state_tensor = torch.FloatTensor(state).to(self.args.device)
+        next_state_tensor = torch.FloatTensor(next_state).to(self.args.device)
         encoded_state = self.encoder_model(state_tensor)
         encoded_next_state = self.encoder_model(next_state_tensor)
 
@@ -264,7 +284,7 @@ class Agent(nn.Module):
         loss_inverse = self.inverse_model_loss_fn(pred_action, target_action)
 
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
-        recorded_action_tensor = torch.FloatTensor(recorded_action).to(self.device)
+        recorded_action_tensor = torch.FloatTensor(recorded_action).to(self.args.device)
         cat_action_state = torch.cat((encoded_state, recorded_action_tensor), dim=1)
 
         pred_next_state = self.forward_model(cat_action_state)
@@ -274,11 +294,15 @@ class Agent(nn.Module):
         return loss_inverse, loss_cos
 
     def train_dqn_model(self, state, recorded_action, reward, next_state, done, is_weight):
-        next_state_gpu = torch.FloatTensor(np.array(next_state)).to(self.device)
+        if self.args.has_normalized_state:
+            state = normalize_rows(state)
+            next_state = normalize_rows(next_state)
+
+        next_state_gpu = torch.FloatTensor(np.array(next_state)).to(self.args.device)
         next_state_Q_val = self.dqn_model(next_state_gpu)
         next_state_Q_val = next_state_Q_val.cpu().detach().numpy()
 
-        if self.ddqn:
+        if self.args.has_ddqn:
             next_state_Q_max_idx = np.argmax(next_state_Q_val, axis=1)
 
             # DDQN
@@ -291,39 +315,33 @@ class Agent(nn.Module):
 
         # If the game has ended done=0, gets multiplied and extrinsic reward is just itself given this state
         # R(s, a) + gamma * max(Q'(s', a')
-        curr_state_Q_val = np.array(reward + done * self.gamma * next_state_Q_max, dtype=np.float)
-        curr_state_Q_val = torch.FloatTensor(curr_state_Q_val)
+        Q_next = np.array(reward + done * self.args.gamma * next_state_Q_max, dtype=np.float)
+        Q_next = torch.FloatTensor(Q_next)
 
-        actions = self.dqn_model(torch.FloatTensor(state).to(self.device))
-        actions = actions.to('cpu') * torch.FloatTensor(recorded_action) # gets rid of zeros
-        actions = torch.sum(actions, dim=1)   # sum one vect, leaving just qmax
+        Q_cur = self.dqn_model(torch.FloatTensor(state).to(self.args.device))
+        Q_cur = Q_cur.to('cpu') * torch.FloatTensor(recorded_action) # gets rid of zeros
+        Q_cur = torch.sum(Q_cur, dim=1)   # sum one vect, leaving just qmax
 
-        loss_dqn = self.dqn_model_loss_fn(actions, curr_state_Q_val) # y_prim, y      LOOK OUT FOR REDUCE PARAMETER!
+        loss_dqn = self.dqn_model_loss_fn(Q_cur, Q_next) # y_prim, y      LOOK OUT FOR REDUCE PARAMETER!
         loss_dqn = (torch.tensor(is_weight).float() * loss_dqn)
-        loss_dqn = loss_dqn.mean() 
 
-        return actions, curr_state_Q_val, loss_dqn
+        td_errors = np.abs(Q_next.detach().numpy() - Q_cur.detach().numpy())
 
+        return td_errors, loss_dqn
 
-        # a = self.model.predict(next_state)[0]
-        t = self.target_model.predict(next_state)[0]
-        target[0][action] = reward + self.gamma * np.amax(t)
-        # target[0][action] = reward + self.gamma * t[np.argmax(a)]
 
     def update_target(self):
             self.target_model.load_state_dict(self.dqn_model.state_dict())
 
-    def update_priority(self, actions, curr_state_Q_val, idxs):
-        # priority error
-        errors = np.abs(actions.detach().numpy() - curr_state_Q_val.detach().numpy())
+    def update_priority(self, td_errors, idxs):
         # update priority
-        for i in range(self.batch_size):
+        for i in range(self.args.batch_size):
             idx = idxs[i]
-            self.memory.update(idx, errors[i]) 
+            self.memory.update(idx, td_errors[i]) 
 
 
     def replay(self):     
-        minibatch, idxs, is_weight = self.memory.uniform_segment_batch(self.batch_size)
+        minibatch, idxs, is_weight = self.memory.uniform_segment_batch(self.args.batch_size)
 
         state = np.stack(minibatch[:, 0])
         recorded_action = np.stack(minibatch[:, 1])
@@ -332,35 +350,35 @@ class Agent(nn.Module):
         done = np.stack(minibatch[:, 4])
 
         # CURIOSITY
-        if self.curiosity:
+        if self.args.has_curiosity:
             loss_inv, loss_cos = self.get_inverse_and_forward_loss(state, next_state, recorded_action)  
-            intrinsic_reward = loss_cos * self.curiosity_scale
+            intrinsic_reward = loss_cos * self.args.curiosity_scale
             reward = reward + intrinsic_reward.to("cpu").detach().numpy()
  
         # DQN MODEL 
-        actions, curr_state_Q_val, loss_dqn = self.train_dqn_model(state, recorded_action, reward, next_state, done, is_weight)
+        td_errors, loss_dqn = self.train_dqn_model(state, recorded_action, reward, next_state, done, is_weight)
 
         # PER
-        self.update_priority(actions, curr_state_Q_val, idxs)
+        self.update_priority(td_errors, idxs)
 
         # LOSS
-        if self.curiosity:
-            loss = loss_inv*(1-self.beta)+self.beta*loss_cos+self.lamda*loss_dqn
-            loss = loss.mean()
+        if self.args.has_curiosity:
+            loss = loss_inv*(1-self.args.beta_curiosity)+self.args.beta_curiosity*loss_cos+self.args.lambda_curiosity*loss_dqn
         else:
             loss = loss_dqn
 
-        loss_dqn.backward()
+        loss = loss.mean()
+        loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad()
 
         # Epsilon decay
-        if self.epsilon > self.epsilon_floor:
-            self.epsilon -= self.epsilon_decay
+        if self.epsilon > self.args.epsilon_floor:
+            self.epsilon -= self.args.epsilon_decay
 
-        if self.curiosity:
+        if self.args.has_curiosity:
             loss_cos = sum(loss_cos) / len(loss_cos)
-            return float(loss_dqn), float(loss_inv), float(loss_cos), float(loss)
+            return float(loss_dqn.detach().mean()), float(loss_inv), float(loss_cos), float(loss)
         else:
-            return float(loss_dqn)
+            return float(loss)
 
