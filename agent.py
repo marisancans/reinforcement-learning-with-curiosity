@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import random, gym
+import random, gym, os
 from gym import envs
 import numpy as np
 from collections import deque
@@ -51,10 +51,10 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
             priority_arr.append(p)
 
         sampling_probabilities = priority_arr / self.tree.total()
-        is_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.PER_b)
-        is_weight /= is_weight.max()
+        importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.PER_b)
+        importance_sampling_weight /= importance_sampling_weight.max()
 
-        return np.array(batch), np.array(idx_arr), is_weight
+        return np.array(batch), np.array(idx_arr), importance_sampling_weight
 
     def update(self, idx, error):
         p = self._getPriority(error)
@@ -127,7 +127,7 @@ class Agent(nn.Module):
         else:
             self.optimizer = torch.optim.Adam(params=self.dqn_model.parameters(), lr = self.args.learning_rate)
 
-        self.memory = Memory(capacity=100000)
+        self.memory = Memory(capacity=self.args.memory_size)
         self.loss_dqn = []
         self.ers = []
         
@@ -137,7 +137,7 @@ class Agent(nn.Module):
 
     def check_args(self, args):
         if args.has_curiosity:
-            if not args.beta_curiosity or not args.lambda_curiosity:
+            if args.beta_curiosity == -1 or args.lambda_curiosity == -1:
                 print("Curiosity enabled but lambda or beta value hasnt been set!")
                 os._exit(1)
     
@@ -149,15 +149,6 @@ class Agent(nn.Module):
             nn.LeakyReLU(),
             nn.Linear(in_features=32, out_features=self.n_actions),
         )
-
-    def build_encoder_model(self):
-        return torch.nn.Sequential(
-            nn.Linear(in_features=self.n_states, out_features=self.args.encoder_1_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.encoder_1_layer_out, out_features=self.args.encoder_2_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.encoder_2_layer_out, out_features=self.args.encoder_3_layer_out)
-        ) 
 
     def build_inverse_model(self):
         # multiply by 2 because we have 2 concated vectors
@@ -189,7 +180,7 @@ class Agent(nn.Module):
         self.current_state = next_state
 
         if self.args.has_ddqn:
-            if self.total_steps % self.update_target_every == 0:
+            if self.total_steps % self.args.target_update == 0:
                 self.update_target()
 
         has_collected = self.memory.tree.n_entries > self.args.batch_size
@@ -293,7 +284,7 @@ class Agent(nn.Module):
   
         return loss_inverse, loss_cos
 
-    def train_dqn_model(self, state, recorded_action, reward, next_state, done, is_weight):
+    def train_dqn_model(self, state, recorded_action, reward, next_state, done, importance_sampling_weight):
         if self.args.has_normalized_state:
             state = normalize_rows(state)
             next_state = normalize_rows(next_state)
@@ -323,7 +314,7 @@ class Agent(nn.Module):
         Q_cur = torch.sum(Q_cur, dim=1)   # sum one vect, leaving just qmax
 
         loss_dqn = self.dqn_model_loss_fn(Q_cur, Q_next) # y_prim, y      LOOK OUT FOR REDUCE PARAMETER!
-        loss_dqn = (torch.tensor(is_weight).float() * loss_dqn)
+        loss_dqn = (torch.tensor(importance_sampling_weight).float() * loss_dqn)
 
         td_errors = np.abs(Q_next.detach().numpy() - Q_cur.detach().numpy())
 
@@ -341,7 +332,7 @@ class Agent(nn.Module):
 
 
     def replay(self):     
-        minibatch, idxs, is_weight = self.memory.uniform_segment_batch(self.args.batch_size)
+        minibatch, idxs, importance_sampling_weight = self.memory.uniform_segment_batch(self.args.batch_size)
 
         state = np.stack(minibatch[:, 0])
         recorded_action = np.stack(minibatch[:, 1])
@@ -356,7 +347,7 @@ class Agent(nn.Module):
             reward = reward + intrinsic_reward.to("cpu").detach().numpy()
  
         # DQN MODEL 
-        td_errors, loss_dqn = self.train_dqn_model(state, recorded_action, reward, next_state, done, is_weight)
+        td_errors, loss_dqn = self.train_dqn_model(state, recorded_action, reward, next_state, done, importance_sampling_weight)
 
         # PER
         self.update_priority(td_errors, idxs)

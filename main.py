@@ -21,6 +21,8 @@ parser.add_argument('--epsilon_floor', type=float, default=0.01, help='Where eps
 parser.add_argument('-g', '--gamma', type=float, default=0.95, help='Hyperparameter for DQN')
 parser.add_argument('-ne', '--n_episodes', type=int, default=50, help='Number of episodes (games) to be played')
 parser.add_argument('-nf', '--n_frames', type=int, default=9999, help='Number of frames per one episode')
+parser.add_argument('--memory_size', type=int, default=10000, help="Replay memory size (This code uses sum tree, not deque)")
+#parser.add_argument('--state_min_val', type=int, default=-1, help)
 
 parser.add_argument('--has_curiosity', type=int, default=0)
 parser.add_argument('--beta_curiosity', type=float, default=-1, help='Beta hyperparameter for curiosity module')
@@ -93,14 +95,9 @@ def comparison():
         while not is_done_d:
             is_done_d = agent_dumb.play_step()
         
-        if not agent_curious.ers or not agent_dumb.ers:
-            continue
+        e_ers_curious = agent_curious.ers[-1] if agent_curious.ers else 0
+        e_ers_dumb = agent_dumb.ers[-1] if agent_dumb.ers else 0
 
-        dqn = { 'c_dqn': agent_curious.loss_dqn[-1], 'd_dqn': agent_dumb.loss_dqn[-1] }
-        writeDict('both_loss_dqn', dqn, i_episode)
-
-        ers = { 'c_ers': agent_curious.ers[-1], 'd_ers': agent_dumb.ers[-1] }
-        writeDict('aaa both_ers', ers, i_episode)
 
 
         logger_ers.add_record(i_episode, agent_curious.ers[-1])
@@ -132,19 +129,18 @@ def evaluate():
         while not is_done:
             is_done = agent.play_step()
             
-        if not agent.ers:
-            continue
+        ers = agent.ers[-1] if agent.ers else 0
+        dqn_loss = agent.loss_dqn[-1] if agent.loss_dqn else 0
 
-        ers = agent.ers[-1]
-        dqn_loss = agent.loss_dqn[-1]
         t = (time.time() - start)*1000
 
         if agent.args.has_curiosity:
-            combined_loss = agent.loss_combined[-1]
-            inverse_loss = agent.loss_inverse[-1]
-            cos_distance = agent.cos_distance[-1]
+            loss_combined = agent.loss_combined[-1] if agent.loss_combined else 0
+            loss_inverse = agent.loss_inverse[-1] if agent.loss_inverse else 0
+            cos_distance = agent.cos_distance[-1] if agent.cos_distance else 0
+
             print("n: {}  |    epsilon: {:.2f}    |    dqn:  {:.2f}    |    ers:  {:.2f}    |    com: {:.2f}    |    inv: {:.2f}   cos: {:.2f}    |   time: {:.2f}".format(
-                i_episode, agent.epsilon, dqn_loss, ers, combined_loss, inverse_loss, cos_distance, t))
+                i_episode, agent.epsilon, dqn_loss, ers, loss_combined, loss_inverse, cos_distance, t))
         else:
             a = 1
             print("{}   |    n: {}  |    epsilon: {:.2f}    |    dqn_loss:  {:.2f}    |    ers:  {}    |     time: {:.2f}".format(
