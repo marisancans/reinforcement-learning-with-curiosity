@@ -84,9 +84,10 @@ class EncoderModule(nn.Module):
 
 #-------------------- AGENT --------------------------
 class Agent(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, name):
         super().__init__()
 
+        self.name = name
         self.check_args(args)
         self.args = args
 
@@ -129,7 +130,7 @@ class Agent(nn.Module):
 
         self.memory = Memory(capacity=self.args.memory_size)
         self.loss_dqn = []
-        self.ers = []
+        self.ers = [0]
         
         # ----- EPISODE BUFFER  --------
         self.e_loss_dqn = []
@@ -137,7 +138,7 @@ class Agent(nn.Module):
 
     def check_args(self, args):
         if args.has_curiosity:
-            if args.beta_curiosity == -1 or args.lambda_curiosity == -1:
+            if args.curiosity_beta == -1 or args.curiosity_lambda == -1:
                 print("Curiosity enabled but lambda or beta value hasnt been set!")
                 os._exit(1)
     
@@ -354,7 +355,7 @@ class Agent(nn.Module):
 
         # LOSS
         if self.args.has_curiosity:
-            loss = loss_inv*(1-self.args.beta_curiosity)+self.args.beta_curiosity*loss_cos+self.args.lambda_curiosity*loss_dqn
+            loss = loss_inv*(1-self.args.curiosity_beta)+self.args.curiosity_beta*loss_cos+self.args.curiosity_lambda*loss_dqn
         else:
             loss = loss_dqn
 
