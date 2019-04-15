@@ -171,6 +171,7 @@ def comparison():
 
             while not is_done_d:
                 is_done_d = agent_dumb.play_step()
+                
             
             e_ers_curious = agent_curious.ers[-1]  # ERS - Episode reward sum
             e_ers_dumb = agent_dumb.ers[-1]
@@ -196,6 +197,8 @@ def comparison():
 # run just one agent
 # ==== MODE 1 ======
 def evaluate():   
+    all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
+    
     for run in range(args.parralel_runs):
         start_run = time.time()
         agent = Agent(args, name='curious')
@@ -210,6 +213,8 @@ def evaluate():
                 
             ers = agent.ers[-1] 
             dqn_loss = agent.loss_dqn[-1]
+            
+            all_ers[run][i_episode] = agent.ers[-1]
 
             t = (time.time() - start)*1000
 
@@ -226,18 +231,12 @@ def evaluate():
                     print("{}   |    n: {}  |    epsilon: {:.2f}    |    dqn_loss:  {:.2f}    |    ers:  {}    |     time: {:.2f}".format(
                         args.device, i_episode, agent.epsilon, dqn_loss, ers, t))
 
-        all_ers.append(agent.ers)
+
         print('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
         # End of i_episodes
     # End of runs
-    
-    log_parralel_agents(all_ers, prefix='eval')
 
-    # CSV logging
-    data = [{'beta': params['beta'], 'lamda': params['lamda'], 'ers_avg': round(sum(agent.ers) / len(agent.ers), 2), 'batch_size': params['batch_size']}]
-    df = pd.DataFrame(data)          
-    writefile(df, params['env_name'], lock)
-
+  
  # ==== MODE 2 ======
 def dqn_vs_ddqn():
     logdir = "./tmp"
@@ -268,6 +267,8 @@ def dqn_vs_ddqn():
 
             while not is_done_ddqn:
                 is_done_ddqn = agent_ddqn.play_step()
+                
+                
 
             ers = { 'ers': agent.ers[-1], 'ers_ddqn': agent_ddqn.ers[-1] }
             writeDict('ers update: ' + str(agent_ddqn.update_target_every) + ' decay: ' + str(agent_ddqn.epsilon_decay), ers, i_episode)
