@@ -294,9 +294,9 @@ def init_child(lock_):
 # Runs multiple agents in parralel, then takes averages
 def parralel_evaluate(params):
     grid_args = args
-    args.curiosity_beta = params['curiosity_beta']
-    args.curiosity_lambda = params['curiosity_lambda']
-    args.batch_size = params['batch_size']
+    grid_args.curiosity_beta = params['curiosity_beta']
+    grid_args.curiosity_lambda = params['curiosity_lambda']
+    grid_args.batch_size = params['batch_size']
 
     all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
 
