@@ -300,6 +300,7 @@ def parralel_evaluate(params):
     grid_args.batch_size = params['batch_size']
 
     all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
+    start_run = time.time()
 
     for run in range(args.parralel_runs):
         start_run = time.time()
@@ -314,8 +315,9 @@ def parralel_evaluate(params):
                 is_done = agent.play_step()
 
             all_ers[run][i_episode] = agent.ers[-1]
-                
-        print('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
+
+        if args.debug:     
+            print('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
         
         # End of i_episodes
     # End of runs
@@ -327,18 +329,19 @@ def parralel_evaluate(params):
     avg = all_ers.mean()
     data['ers_avg'] = [avg]
     df = pd.DataFrame(data)   
-    fn = args.env_name
+    fn = agent.args.env_name
     writefile(df, fn, lock)
 
+    print('Logged: {} in {:.2f} s'.format(df.values[0], time.time() - start_run))
 
+    
 
 # ==== MODE 3 ======   
 def multiprocess():
     curiosity_beta = np.round(np.arange(0, 1.1, 0.1), 1)
     curiosity_lambda = np.round(np.arange(0, 1.1, 0.1), 1)
     batch_size = [32]#, 64, 128, 256]
-    env_name = args.env_name
-    param_grid = {'curiosity_beta': curiosity_beta, 'curiosity_lambda': curiosity_lambda, 'batch_size': batch_size, 'env_name': env_name}
+    param_grid = {'curiosity_beta': curiosity_beta, 'curiosity_lambda': curiosity_lambda, 'batch_size': batch_size}
     p = ParameterGrid(param_grid)
     p = list(p)
 
@@ -352,6 +355,7 @@ def writefile(df, file_name, lock):
         ex = os.getcwd() + "/" + file_name + ".csv"
         f = not os.path.exists(ex)
         df.to_csv(file_name + ".csv", mode='a', sep=',', header=f)
+        
 
 if __name__ == '__main__':
     main()
