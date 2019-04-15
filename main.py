@@ -287,8 +287,8 @@ def parralel_evaluate(params):
 
 # ==== MODE 2 ======   
 def multiprocess():
-    curiosity_beta = np.round(np.arange(0, 1.1, 0.1), 1)
-    curiosity_lambda = np.round(np.arange(0, 1.1, 0.1), 1)
+    curiosity_beta = np.round(np.arange(0, 1.1, 0.2), 1)
+    curiosity_lambda = np.round(np.arange(0, 1.1, 0.2), 1)
     batch_size = [32]#, 64, 128, 256]
     param_grid = {'curiosity_beta': curiosity_beta, 'curiosity_lambda': curiosity_lambda, 'batch_size': batch_size}
     p = ParameterGrid(param_grid)
