@@ -118,9 +118,9 @@ class Agent(nn.Module):
             self.optimizer = torch.optim.Adam(params=params, lr=self.args.learning_rate)
             self.inverse_model_loss_fn = nn.MSELoss()
 
-            self.loss_inverse = []
-            self.cos_distance = []
-            self.loss_combined = []
+            self.loss_inverse = [0]
+            self.cos_distance = [0]
+            self.loss_combined = [0]
 
             self.e_loss_inverse = []
             self.e_cos_distance = []
@@ -129,7 +129,7 @@ class Agent(nn.Module):
             self.optimizer = torch.optim.Adam(params=self.dqn_model.parameters(), lr = self.args.learning_rate)
 
         self.memory = Memory(capacity=self.args.memory_size)
-        self.loss_dqn = []
+        self.loss_dqn = [0]
         self.ers = [0]
         
         # ----- EPISODE BUFFER  --------
