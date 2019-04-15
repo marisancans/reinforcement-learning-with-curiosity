@@ -297,7 +297,6 @@ def parralel_evaluate(params):
     args.curiosity_beta = params['curiosity_beta']
     args.curiosity_lambda = params['curiosity_lambda']
     args.batch_size = params['batch_size']
-    args.env_name = params['env_name']
 
     all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
 
@@ -327,7 +326,7 @@ def parralel_evaluate(params):
     avg = all_ers.mean()
     data['ers_avg'] = [avg]
     df = pd.DataFrame(data)   
-    fn = params['env_name']
+    fn = args.env_name
     writefile(df, fn, lock)
 
 
@@ -337,7 +336,7 @@ def multiprocess():
     curiosity_beta = np.round(np.arange(0, 1.1, 0.1), 1)
     curiosity_lambda = np.round(np.arange(0, 1.1, 0.1), 1)
     batch_size = [32]#, 64, 128, 256]
-    env_name = ['CartPole-v0']
+    env_name = args.env_name
     param_grid = {'curiosity_beta': curiosity_beta, 'curiosity_lambda': curiosity_lambda, 'batch_size': batch_size, 'env_name': env_name}
     p = ParameterGrid(param_grid)
     p = list(p)
