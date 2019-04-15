@@ -12,7 +12,7 @@ from agent import Agent
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-m', '--mode', type=int, default=1, help='0 - compare two models, 1 - run single model, 2 - DQN vs DDQN comparison, 3 - multiprocess testing')
+parser.add_argument('-m', '--mode', type=int, default=1, help='0 - run single model, 1 - compare multiple agents , 2 - multiprocess testing')
 parser.add_argument('-d', '--device', default='cpu', help='cpu or cuda')
 parser.add_argument('--debug', type=int, default=0, help='Extra print statements between episodes')
 
@@ -27,7 +27,7 @@ parser.add_argument('-g', '--gamma', type=float, default=0.95, help='Hyperparame
 parser.add_argument('-ne', '--n_episodes', type=int, default=50, help='Number of episodes (games) to be played')
 parser.add_argument('-nf', '--n_frames', type=int, default=9999, help='Number of frames per one episode')
 parser.add_argument('--memory_size', type=int, default=10000, help="Replay memory size (This code uses sum tree, not deque)")
-parser.add_argument('--parralel_runs', type=int, default=10, help="How many parralel agents to simulate")
+parser.add_argument('--parralel_runs', type=int, default=5, help="How many parralel agents to simulate")
 parser.add_argument('--n_processes', type=int, default=3, help="How many parralel processes to run (MODE 3)")
 #parser.add_argument('--state_min_val', type=int, default=-1, help)
 
@@ -53,14 +53,16 @@ args = parser.parse_args()
 
 logdir = "./logs/"
 
+d = logdir + 'comp'
+logComp = LogWriter(d, sync_cycle=100)
+
 if torch.cuda.is_available():
     print('cuda detected')
 
 mode = { 
         0: 'comparison',
         1: 'evaluate',
-        2: 'dqn_vs_ddqn',
-        3: 'multiprocess'
+        2: 'multiprocess'
     }
 
 def main():
@@ -68,31 +70,19 @@ def main():
     run = {
         0: comparison,
         1: evaluate,
-        2: dqn_vs_ddqn,
-        3: multiprocess,
+        2: multiprocess,
         }
     
     run[args.mode]()
 
 # Log n parralel runs from timeline
-def log_seperate_timelines(timelines, agent_names, prefix, process_id=0):
-    d = logdir + prefix
-    logW = LogWriter(d, sync_cycle=1000)
+def log_seperate_agent(ers_avg, agent_name):
+    with logComp.mode(agent_name) as l:
+        logger_ers_avg = l.scalar("/ers/avg")
 
-    for timeline, agent_name in zip(timelines, agent_names):
-        with logW.mode(agent_name):
-            logger_ers_min = logW.scalar("/ers/min")
-            logger_ers_avg = logW.scalar("/ers/avg")
-            logger_ers_max = logW.scalar("/ers/max")
+    for t, a in enumerate(ers_avg):
+        logger_ers_avg.add_record(t, a)
 
-        for parralel_time_slices in timeline:
-            parralel_min = min([time_slice.ers_avg for time_slice in parralel_time_slices])
-            parralel_max = max([time_slice.ers_avg for time_slice in parralel_time_slices])
-            parralel_avg = sum([time_slice.ers_avg for time_slice in parralel_time_slices]) / len(parralel_time_slices)
-
-            logger_ers_min.add_record(parralel_time_slices[0].i_episode, parralel_min)
-            logger_ers_avg.add_record(parralel_time_slices[0].i_episode, parralel_max)
-            logger_ers_max.add_record(parralel_time_slices[0].i_episode, parralel_avg)
 
 
 
@@ -113,8 +103,6 @@ def log_parralel_agents(all_ers, prefix):
     ers_min = []
     ers_avg = []
     ers_max = []
-
-    # CONCACENTAQTE COLUMN WISE AGENT ERS ETC
 
     for a in agents:
         t_ers_avg = []
@@ -141,57 +129,66 @@ def log_parralel_agents(all_ers, prefix):
    
 
 
-# This mode compares two agents
-# args.parralel_runs is how many parralel agents are simulated and then taken average of
+# This mode compares n agents
 # ==== MODE 0 ======
 def comparison():
     # Parralel run timeline
-    timeline_names = ['curious', 'dumb']
-    timelines = [] 
-     
+    names = ['curious', 'curious_ddqn', 'dqn', 'ddqn']
+
+    curious_args = args
+    curious_args.has_curiosity = 1
+
+    curious_ddqn_args = args
+    curious_ddqn_args.has_curiosity = 1
+    curious_ddqn_args.has_ddqn = 1
+
+    ddqn_args = args
+    ddqn_args.has_ddqn = 1
+
+    all_args = [curious_args, curious_ddqn_args, args, ddqn_args]
+    all_ers = np.zeros(shape=(args.parralel_runs, len(names), args.n_episodes))
+   
     for run in range(args.parralel_runs):
-        curious_args = args
-        curious_args.has_curiosity = True
-        agent_curious = Agent(curious_args, name='curious')
+        agents = [Agent(agent_args, name=n) for agent_args, n in zip(all_args, names)]
 
-        agent_dumb = Agent(args, name='dumb')
+        for a_idx, a in enumerate(agents):
+            for i_episode in range(args.n_episodes):
+                a.reset_env()
+                is_done = False
 
-        run_timeline = []
-
-        for i_episode in range(1, args.n_episodes + 1):
-            agent_curious.reset_env()
-            agent_dumb.reset_env()
-
-            start = time.time()
-            is_done_c = False
-            is_done_d = False
-
-            while not is_done_c:
-                is_done_c = agent_curious.play_step()
-
-            while not is_done_d:
-                is_done_d = agent_dumb.play_step()
+                while not is_done:
+                    is_done = a.play_step()
                 
+                all_ers[run][a_idx][i_episode] = np.array(a.ers[-1])
             
-            e_ers_curious = agent_curious.ers[-1]  # ERS - Episode reward sum
-            e_ers_dumb = agent_dumb.ers[-1]
+            print('run', run, a.name)
+        print('Run', run, ' finished')
 
-            t = (time.time() - start)*1000
-
-            print("run: {}   |   i_episode: {}  |    epsilon: {:.2f}    |    ers_c:  {:.2f}    |    ers_d:  {:.2f}    |     time: {:.2f} s   ".format(
-                    run, i_episode, agent_curious.epsilon, e_ers_curious, e_ers_dumb, t*0.001))
-
-            curious_slice, dumb_slice = make_time_slice(agents=[agent_curious, agent_dumb], i_episode=i_episode)
-            timeline_slice = [curious_slice, dumb_slice]
-            run_timeline.append(timeline_slice)
-
-        timelines.append(run_timeline)
         # End of i_episodes
     # End of runs
-    
-    log_seperate_timelines(timelines, agent_names=timeline_names, prefix='comp')
+
+    d = logdir + 'asd'
+    if os.path.exists(d):
+        shutil.rmtree(d)
+
+    logW = LogWriter(d, sync_cycle=100)
+
+    for a_idx in range(len(names)):
+        agent_runs = []
+
+        for run in range(args.parralel_runs):
+            agent_runs.append(all_ers[run][a_idx])
+
+        ers_avg = np.sum(agent_runs, axis=0) / args.parralel_runs
+
+        #log_seperate_agent(ers_avg, agent_name=names[a_idx])
 
 
+        with logW.mode(names[a_idx]):
+            l = logW.scalar('ers')
+
+        for t, x in enumerate(ers_avg):
+            l.add_record(t, x)
 
 
 # run just one agent
@@ -203,7 +200,7 @@ def evaluate():
         start_run = time.time()
         agent = Agent(args, name='curious')
 
-        for i_episode in range(1, args.n_episodes + 1):
+        for i_episode in range(args.n_episodes):
             start = time.time()
             agent.reset_env()
             is_done = False
@@ -236,57 +233,6 @@ def evaluate():
         # End of i_episodes
     # End of runs
 
-  
- # ==== MODE 2 ======
-def dqn_vs_ddqn():
-    logdir = "./tmp"
-    logw = LogWriter(logdir, sync_cycle=1000)
-
-
-    with logw.mode('dqn') as logger:
-        logger_dqn = logger.scalar("scalar")
-
-    with logw.mode('ddqn') as logger:
-        logger_ddqn = logger.scalar("scalar")
-
-    for game in range(10):
-        agent = Agent(device, env_name, batch_size=batch_size, curiosity=False, ddqn=False, epsilon_decay=decay)
-        agent_ddqn = Agent(device, env_name, batch_size=batch_size, curiosity=False, ddqn=True, epsilon_decay=decay, update_target_every=update)
-
-
-        for i_episode in range(1, n_episodes):
-            agent.reset_env()
-            agent_ddqn.reset_env()
-
-            start = time.time()
-            is_done = False
-            is_done_ddqn = False
-
-            while not is_done:
-                is_done = agent.play_step()
-
-            while not is_done_ddqn:
-                is_done_ddqn = agent_ddqn.play_step()
-                
-                
-
-            ers = { 'ers': agent.ers[-1], 'ers_ddqn': agent_ddqn.ers[-1] }
-            writeDict('ers update: ' + str(agent_ddqn.update_target_every) + ' decay: ' + str(agent_ddqn.epsilon_decay), ers, i_episode)
-
-            dqn = { 'dqn': agent.loss_dqn[-1], 'dqn_ddqn': agent_ddqn.loss_dqn[-1] }
-            writeDict('aaaaboth_loss_dqn', dqn, i_episode)
-
-            t = (time.time() - start)*1000
-
-            print("n: {}  |    epsilon: {:.2f}    |    ers:  {:.2f}    |    ers_ddqn:  {:.2f}    |     time: {:.2f} s    ".format(
-                    i_episode, agent.epsilon, agent.ers[-1], agent_ddqn.ers[-1], t*0.001))
-
-        ers_dqn_avg = sum(agent.ers) / len(agent.ers)
-        ers_ddqn_avg = sum(agent_ddqn.ers) / len(agent_ddqn.ers)
-    
-        logger_dqn.add_record(game, ers_dqn_avg)
-        logger_ddqn.add_record(game, ers_ddqn_avg)
-
 
 def init_child(lock_):
     global lock
@@ -300,19 +246,22 @@ def parralel_evaluate(params):
     grid_args.batch_size = params['batch_size']
 
     all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
-    start_run = time.time()
+    start_all = time.time()
 
     for run in range(args.parralel_runs):
         start_run = time.time()
 
         agent = Agent(grid_args, name='curious')
 
-        for i_episode in range(0, args.n_episodes):
+        for i_episode in range(args.n_episodes):
             agent.reset_env()
             is_done = False
             
             while not is_done:
                 is_done = agent.play_step()
+
+            if args.debug and i_episode % 10 == 0:
+                print('i_episode:', i_episode, multiprocessing.current_process().name)
 
             all_ers[run][i_episode] = agent.ers[-1]
 
@@ -332,11 +281,11 @@ def parralel_evaluate(params):
     fn = agent.args.env_name
     writefile(df, fn, lock)
 
-    print('Logged: {} in {:.2f} s'.format(df.values[0], time.time() - start_run))
+    print('Logged: {} in {:.2f} s'.format(df.values[0], time.time() - start_all))
 
     
 
-# ==== MODE 3 ======   
+# ==== MODE 2 ======   
 def multiprocess():
     curiosity_beta = np.round(np.arange(0, 1.1, 0.1), 1)
     curiosity_lambda = np.round(np.arange(0, 1.1, 0.1), 1)
