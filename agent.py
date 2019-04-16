@@ -12,11 +12,7 @@ from sum_tree import SumTree
 def average(x):
     return sum(x) / len(x)
 
-def normalize_rows(x):
-    for row_idx in range(x.shape[0]):
-        v = x[row_idx, :]   
-        x[row_idx, :] = (v - v.min()) / (v.max() - v.min())
-    return x
+
 
 #-------------------- MEMORY --------------------------
 class Memory:   # stored as ( s, a, r, s_ ) in SumTree
@@ -94,7 +90,15 @@ class Agent(nn.Module):
         # --------- ENVIROMENT ----------
         self.env = gym.make(self.args.env_name)
         self.current_state = self.env.reset()
-        self.n_states = self.env.observation_space.shape[0]
+
+        # --------- STATE --------------- Atari has(height 210, width 160, channels 3)
+        # if image, the state is flattened and scaled
+        if self.args.has_images:
+            h, w, c = self.env.observation_space.shape
+            self.n_states = h * w * self.args.image_scale
+        else:
+            self.n_states = self.env.observation_space.shape[0]
+        
         self.n_actions = self.env.action_space.n
 
         # MODELS
@@ -112,7 +116,6 @@ class Agent(nn.Module):
             self.inverse_model = self.build_inverse_model().to(self.args.device)
             self.forward_model = self.build_forward_model().to(self.args.device)
 
-            # \ is not a division operator!
             params = list(self.inverse_model.parameters()) + list(self.encoder_model.parameters()) + list(self.forward_model.parameters()) + list(self.dqn_model.parameters())
 
             self.optimizer = torch.optim.Adam(params=params, lr=self.args.learning_rate)
@@ -141,14 +144,23 @@ class Agent(nn.Module):
             if args.curiosity_beta == -1 or args.curiosity_lambda == -1:
                 print("Curiosity enabled but lambda or beta value hasnt been set!")
                 os._exit(1)
+
+        if args.has_normalized_state:
+            if (args.state_min_val > 0 and args.state_max_val < 0) or (args.state_max_val > 0 and args.state_min_val < 0):
+                print('Both state_min_val and state_max_val has to be set if manual values are enabled!') 
+                os._exit(1)
+
+        if args.has_images:
+            if args.dqn_1_layer_out <= 64 or args.dqn_2_layer_out <= 32:
+                print('has_images enabled, but dqn_1_layer or dqn_2_layer out isnt changed, is this a mistake? Image feature vectors usually need bigger layers')
     
     def build_dqn_model(self):
         return torch.nn.Sequential(
-            nn.Linear(in_features=self.n_states, out_features=64),
+            nn.Linear(in_features=self.n_states, out_features=self.args.dqn_1_layer_out),
             nn.LeakyReLU(),
-            nn.Linear(in_features=64, out_features=32),
+            nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.args.dqn_2_layer_out),
             nn.LeakyReLU(),
-            nn.Linear(in_features=32, out_features=self.n_actions),
+            nn.Linear(in_features=self.args.dqn_2_layer_out, out_features=self.n_actions),
         )
 
     def build_inverse_model(self):
@@ -169,6 +181,32 @@ class Agent(nn.Module):
             nn.ReLU(),
             nn.Linear(in_features=self.args.forward_2_layer_out, out_features=self.args.encoder_3_layer_out)
         )
+
+    def normalize_rows(self, x):
+        for row_idx in range(x.shape[0]):
+            v = x[row_idx, :]
+            row_min = v.min() if self.args.state_min_val == -1 else self.args.state_min_val 
+            row_max = v.max() if self.args.state_max_val == -1 else self.args.state_max_val
+   
+            x[row_idx, :] = (v - row_min) / (row_max - row_min)
+        return x
+
+    def print_debug(self, i_episode, exec_time):
+        if self.args.debug:
+            dqn_loss = self.loss_dqn[-1]
+            ers = self.ers[-1]
+
+            if self.args.debug:
+                info = "i_episode: {}   |   epsilon: {:.2f}   |    dqn:  {:.2f}   |   ers:  {:.2f}   |   time: {:.2f}".format(i_episode, self.epsilon, dqn_loss, ers, exec_time)
+                
+                if self.args.has_curiosity:
+                    loss_combined = self.loss_combined[-1]
+                    loss_inverse = self.loss_inverse[-1] 
+                    cos_distance = self.cos_distance[-1] 
+
+                    info += "   |   com: {:.2f}    |    inv: {:.2f}   |   cos: {:.2f}".format(loss_combined, loss_inverse, cos_distance)
+
+                print(info)
 
     def play_step(self):
         action, act_values = self.act()
@@ -256,8 +294,8 @@ class Agent(nn.Module):
     def get_inverse_and_forward_loss(self, state, next_state, recorded_action):
         # Row wise sate min-max normalization 
         if self.args.has_normalized_state:
-            state = normalize_rows(state)
-            next_state = normalize_rows(next_state)
+            state = self.normalize_rows(state)
+            next_state = self.normalize_rows(next_state)
 
         # State encoding
         state_tensor = torch.FloatTensor(state).to(self.args.device)
@@ -287,8 +325,8 @@ class Agent(nn.Module):
 
     def train_dqn_model(self, state, recorded_action, reward, next_state, done, importance_sampling_weight):
         if self.args.has_normalized_state:
-            state = normalize_rows(state)
-            next_state = normalize_rows(next_state)
+            state = self.normalize_rows(state)
+            next_state = self.normalize_rows(next_state)
 
         next_state_gpu = torch.FloatTensor(np.array(next_state)).to(self.args.device)
         next_state_Q_val = self.dqn_model(next_state_gpu)

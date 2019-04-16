@@ -12,21 +12,23 @@ from agent import Agent
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-m', '--mode', type=int, default=1, help='0 - run single model, 1 - compare multiple agents , 2 - multiprocess testing')
+parser.add_argument('-m', '--mode', type=int, default=1, help='0 - compare agents, 1 - compare single , 2 - multiprocess grid search')
 parser.add_argument('-d', '--device', default='cpu', help='cpu or cuda')
 parser.add_argument('--debug', type=int, default=0, help='Extra print statements between episodes')
 
-parser.add_argument('-e', '--env_name', default='CartPole-v0',  help='OpenAI game enviroment name')
+parser.add_argument('-e', '--env_name', required=True,  help='OpenAI game enviroment name')
 parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
 parser.add_argument('-bs', '--batch_size', type=int, default=32)
 
 parser.add_argument('--has_normalized_state', type=int, default=0, help='Normalize state vector in forward and inverse models? true | false')
-parser.add_argument('--epsilon_decay', type=float, default=0.001, help='Epslion decay for exploration / explotation policy')
+parser.add_argument('--epsilon_decay', type=float, required=True, help='Epslion decay for exploration / explotation policy')
 parser.add_argument('--epsilon_floor', type=float, default=0.01, help='Where epsilon stops to decay')
 parser.add_argument('-g', '--gamma', type=float, default=0.95, help='Hyperparameter for DQN')
 parser.add_argument('-ne', '--n_episodes', type=int, default=50, help='Number of episodes (games) to be played')
 parser.add_argument('-nf', '--n_frames', type=int, default=9999, help='Number of frames per one episode')
 parser.add_argument('--memory_size', type=int, default=10000, help="Replay memory size (This code uses sum tree, not deque)")
+parser.add_argument('--has_images', type=int, default=0, help='Whether or not the game state is an image')
+parser.add_argument('--image_scale', type=float, default=1, help='Image downscaling factor')
 
 parser.add_argument('--parralel_runs', type=int, default=5, help="How many parralel agents to simulate")
 parser.add_argument('--n_processes', type=int, default=3, help="How many parralel processes to run (MODE 3)")
@@ -34,7 +36,7 @@ parser.add_argument('--n_processes', type=int, default=3, help="How many parrale
 parser.add_argument('--state_min_val', type=float, default=-1.0, help="Manual min value for feature encoder normalization")
 parser.add_argument('--state_max_val', type=float, default=-1.0, help="Manual max value for feature encoder normalization")
 
-parser.add_argument('--has_curiosity', type=int, default=0)
+parser.add_argument('--has_curiosity', type=int, required=True)
 parser.add_argument('--curiosity_beta', type=float, default=-1.0, help='Beta hyperparameter for curiosity module')
 parser.add_argument('--curiosity_lambda', type=float, default=-1.0, help='Lambda hyperparameter for curiosity module')
 parser.add_argument('--curiosity_scale', type=float, default=1.0, help='Intrinsic reward scale factor')
@@ -48,6 +50,9 @@ parser.add_argument('--inverse_2_layer_out', type=int, default=20)
 
 parser.add_argument('--forward_1_layer_out', type=int, default=30)
 parser.add_argument('--forward_2_layer_out', type=int, default=20)
+
+parser.add_argument('--dqn_1_layer_out', type=int, default=64)
+parser.add_argument('--dqn_2_layer_out', type=int, default=32)
 
 parser.add_argument('--has_ddqn', type=int, default=0, help='Is double DQN enabled?')
 parser.add_argument('--target_update', type=float, default=10, help='Update target network after n steps')
@@ -149,7 +154,7 @@ def comparison():
                 
                 all_ers[run][a_idx][i_episode] = np.array(a.ers[-1])
                 if i_episode % 10 == 0:
-                    print(i_episode)
+                    print(i_episode, a.ers[-1])
             
             print('run', run, a.name)
         print('Run', run, ' finished')
@@ -165,6 +170,8 @@ def comparison():
 # ==== MODE 1 ======
 def evaluate():   
     all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
+
+    logW = get_cleaned_logger(folder_name='eval')
    
     for run in range(args.parralel_runs):
         start_run = time.time()
@@ -182,9 +189,10 @@ def evaluate():
                 is_done = agent.play_step()
                              
             all_ers[run][i_episode] = agent.ers[-1]
-            agent.print_debug(time.time() - start)
+            t = time.time() - start
+            agent.print_debug(i_episode, exec_time=t)
 
-            l.add_record(i_episode, ers)
+            l.add_record(i_episode, agent.ers[-1])
 
         print('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
 
