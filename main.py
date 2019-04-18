@@ -12,9 +12,11 @@ from agent import Agent
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-m', '--mode', type=int, default=1, help='0 - compare agents, 1 - compare single , 2 - multiprocess grid search')
+parser.add_argument('-m', '--mode', type=int, default=1, help='0 - compare agents, 1 - run single , 2 - multiprocess grid search')
 parser.add_argument('-d', '--device', default='cpu', help='cpu or cuda')
+
 parser.add_argument('--debug', type=int, default=0, help='Extra print statements between episodes')
+parser.add_argument('--debug_states', type=int, default=0, help='Use opencv to peer into feature states')
 
 parser.add_argument('-e', '--env_name', required=True,  help='OpenAI game enviroment name')
 parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
@@ -27,8 +29,11 @@ parser.add_argument('-g', '--gamma', type=float, default=0.95, help='Hyperparame
 parser.add_argument('-ne', '--n_episodes', type=int, default=50, help='Number of episodes (games) to be played')
 parser.add_argument('-nf', '--n_frames', type=int, default=9999, help='Number of frames per one episode')
 parser.add_argument('--memory_size', type=int, default=10000, help="Replay memory size (This code uses sum tree, not deque)")
+
 parser.add_argument('--has_images', type=int, default=0, help='Whether or not the game state is an image')
 parser.add_argument('--image_scale', type=float, default=1, help='Image downscaling factor')
+parser.add_argument('--n_sequence_stack', type=int, default=4, help='How many frames are in frame stack (deque)')
+parser.add_argument('--n_frame_skip', type=int, default=4, help='How many frames to skip, before pushing to frame stack')
 
 parser.add_argument('--parralel_runs', type=int, default=5, help="How many parralel agents to simulate")
 parser.add_argument('--n_processes', type=int, default=3, help="How many parralel processes to run (MODE 3)")
@@ -102,6 +107,8 @@ def log_comparison_agents(all_ers, names, folder_name):
             agent_runs.append(all_ers[run][a_idx])
 
         ers_avg = np.sum(agent_runs, axis=0) / args.parralel_runs
+        ers_min = np.min(agent_runs, axis=0)
+        ers_max = np.max(agent_runs, axis=0)
 
         with logW.mode(names[a_idx]):
             l = logW.scalar('ers_' + args.env_name)
@@ -109,7 +116,9 @@ def log_comparison_agents(all_ers, names, folder_name):
         for t, x in enumerate(ers_avg):
             l.add_record(t, x)
         
-        data[names[a_idx]] = ers_avg
+        data[names[a_idx] + "_ers"] = ers_avg
+        data[names[a_idx] + "_min"] = ers_min
+        data[names[a_idx] + "_max"] = ers_max
 
     file_name = "ers_data.csv"
     ex = logdir + folder_name + "/" + file_name
@@ -125,6 +134,8 @@ def log_comparison_agents(all_ers, names, folder_name):
 def comparison():
     # -------------------- Write all agents to test in here ----------------
     names = ['curious', 'curious_ddqn', 'dqn', 'ddqn']
+
+    args.has_curiosity = 0
 
     curious_args = args
     curious_args.has_curiosity = 1
@@ -186,7 +197,9 @@ def evaluate():
             is_done = False
             
             while not is_done:
+                #agent.env.render()
                 is_done = agent.play_step()
+                
                              
             all_ers[run][i_episode] = agent.ers[-1]
             t = time.time() - start

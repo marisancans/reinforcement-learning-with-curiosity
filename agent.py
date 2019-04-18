@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as models
 
-import random, gym, os
+import random, gym, os, cv2, time
+from collections import deque
 from gym import envs
 import numpy as np
 from collections import deque
@@ -89,13 +91,14 @@ class Agent(nn.Module):
 
         # --------- ENVIROMENT ----------
         self.env = gym.make(self.args.env_name)
-        self.current_state = self.env.reset()
+        self.current_state = None # Gets set in self.reset_env()
 
-        # --------- STATE --------------- Atari has(height 210, width 160, channels 3)
-        # if image, the state is flattened and scaled
+        # --------- STATE --------------- 
+        # if image, the state is scaled and cropped
         if self.args.has_images:
             h, w, c = self.env.observation_space.shape
-            self.n_states = h * w * self.args.image_scale
+            self.n_states = h * w * self.args.image_scale * self.args.n_sequence_stack# TODO implement scaling and cropping
+            self.states_sequence = deque(maxlen=self.args.n_sequence_stack)
         else:
             self.n_states = self.env.observation_space.shape[0]
         
@@ -104,15 +107,23 @@ class Agent(nn.Module):
         # MODELS
         self.dqn_model = self.build_dqn_model().to(self.args.device)
         self.target_model = self.build_dqn_model().to(self.args.device)
-        self.update_target()
         self.dqn_model_loss_fn = nn.MSELoss()
 
         self.current_episode = 0
-        self.total_steps = 0
+        self.total_steps = 0 # in all episodes combined
+        self.current_step = 0 # only in current episode
+        self.update_target()
+
         self.epsilon = 1.0
 
-        if self.args.has_curiosity:
+        if self.args.has_images:
+            self.encoder_model = models.densenet161(pretrained=True)
+            # remove last layer
+            self.encoder_model = nn.Sequential(*list(self.encoder_model.children())[:-1])
+        else:
             self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
+
+        if self.args.has_curiosity:
             self.inverse_model = self.build_inverse_model().to(self.args.device)
             self.forward_model = self.build_forward_model().to(self.args.device)
 
@@ -152,8 +163,12 @@ class Agent(nn.Module):
 
         if args.has_images:
             if args.dqn_1_layer_out <= 64 or args.dqn_2_layer_out <= 32:
-                print('has_images enabled, but dqn_1_layer or dqn_2_layer out isnt changed, is this a mistake? Image feature vectors usually need bigger layers')
+                print('WARNING has_images enabled, but dqn_1_layer or dqn_2_layer out isnt changed, is this a mistake? Image feature vectors usually need bigger layers')
     
+            if not args.n_sequence_stack or args.n_sequence_stack <= 1:
+                print('n_sequence_stack <= 1 or not passed in arguments')
+                os._exit(1)
+
     def build_dqn_model(self):
         return torch.nn.Sequential(
             nn.Linear(in_features=self.n_states, out_features=self.args.dqn_1_layer_out),
@@ -182,6 +197,10 @@ class Agent(nn.Module):
             nn.Linear(in_features=self.args.forward_2_layer_out, out_features=self.args.encoder_3_layer_out)
         )
 
+    def preproprocess_frame(self, frame):
+        # RGB 3 channels to grayscale 1 channel
+        return np.dot(frame[...,:3], [0.2989, 0.5870, 0.1140])
+
     def normalize_rows(self, x):
         for row_idx in range(x.shape[0]):
             v = x[row_idx, :]
@@ -190,6 +209,17 @@ class Agent(nn.Module):
    
             x[row_idx, :] = (v - row_min) / (row_max - row_min)
         return x
+
+    def get_next_sequence(self, next_state, is_terminal):
+        processed = self.preproprocess_frame(next_state)
+        if is_terminal:
+            blank = np.zeros(shape=(processed.shape[0], processed.shape[1]))
+            self.states_sequence.append(blank) # height width
+        else:
+            self.states_sequence.append(processed)
+        
+        return np.stack(self.states_sequence)
+
 
     def print_debug(self, i_episode, exec_time):
         if self.args.debug:
@@ -212,50 +242,39 @@ class Agent(nn.Module):
         action, act_values = self.act()
         next_state, reward, is_done, _ = self.env.step(action)
         done = 0.0 if is_done else 1.0
+
+        if self.args.has_images:
+            next_state = self.get_next_sequence(next_state, is_done)
+
         transition = [self.current_state, act_values, reward, next_state, done]
         
         self.memory.add(error=10000, transition=transition) # because its initially unknown and has to be high priority
         self.e_reward += reward
         self.current_state = next_state
 
-        if self.args.has_ddqn:
-            if self.total_steps % self.args.target_update == 0:
-                self.update_target()
+        self.update_target()
 
-        has_collected = self.memory.tree.n_entries > self.args.batch_size
+        # Pre populate memory before replay
+        if self.memory.tree.n_entries > self.args.batch_size:
+            self.replay(is_done)
         
-        if has_collected:
-            if self.args.has_curiosity:
-                dqn, inv, cos, com = self.replay()
-                self.e_loss_inverse.append(inv)
-                self.e_cos_distance.append(cos)
-                self.e_loss_combined.append(com)
-            else:
-                dqn = self.replay()
-            
-            self.e_loss_dqn.append(dqn)
-        
-        if is_done and has_collected:
-            dqn_avg = average(self.e_loss_dqn)
-            self.loss_dqn.append(dqn_avg)
-            self.ers.append(self.e_reward)
-
-            if self.args.has_curiosity:
-                inv_avg = average(self.e_loss_inverse)
-                cos_avg = average(self.e_cos_distance)
-                com_avg = average(self.e_loss_combined)
-                self.loss_inverse.append(inv_avg)
-                self.cos_distance.append(cos_avg)
-                self.loss_combined.append(com_avg)
-
         self.total_steps += 1
+        self.current_step += 1
         return is_done
 
+    def init_current_state(self, state):
+        processed = self.preproprocess_frame(state)
+        [self.states_sequence.append(processed) for _ in range(self.args.n_sequence_stack)] # Fill with identical states/frames
+
+        return np.stack(self.states_sequence)
 
     def reset_env(self):
-        self.current_state = self.env.reset()
+        state = self.env.reset()
+        self.current_state = self.init_current_state(state) if self.args.has_images else state
         self.e_loss_dqn.clear()
         self.e_reward = 0
+        self.current_step = 0
+
         if self.args.has_curiosity:
             self.e_loss_inverse.clear()
             self.e_loss_combined.clear()
@@ -281,8 +300,12 @@ class Agent(nn.Module):
             return action_idx, act_vector
 
         # Exploitation
-        X = torch.tensor(self.current_state).float().to(self.args.device)
-        act_values = self.dqn_model(X)  # Predict action based on state
+        state_gpu = torch.tensor(self.current_state).float().to(self.args.device)
+
+        if self.args.has_images:
+            state_gpu = state_gpu.view(-1)
+
+        act_values = self.dqn_model(state_gpu)  # Predict action based on state
         act_values = act_values.cpu().detach().numpy()
 
         action_idx = np.argmax(act_values)
@@ -302,7 +325,7 @@ class Agent(nn.Module):
         next_state_tensor = torch.FloatTensor(next_state).to(self.args.device)
         encoded_state = self.encoder_model(state_tensor)
         encoded_next_state = self.encoder_model(next_state_tensor)
-
+       
         # --------------- INVERSE MODEL -----------------------
         # transition from s to s_t+1 concatenated column-wise
         trans = torch.cat((encoded_state, encoded_next_state), dim=1)
@@ -320,6 +343,22 @@ class Agent(nn.Module):
         pred_next_state = self.forward_model(cat_action_state)
         loss_cos = F.cosine_similarity(pred_next_state, encoded_next_state, dim=1)  
         loss_cos = 1.0 - loss_cos
+
+        if self.args.debug_states:
+            pred_batch = np.array(pred_next_state.detach().numpy() * 255, dtype = np.uint8)
+            target_batch = np.array(encoded_next_state.detach().numpy() * 255, dtype = np.uint8)
+            pred_batch = np.stack((pred_batch,)*3, axis=-1)
+            target_batch = np.stack((target_batch,)*3, axis=-1)
+
+            delim = np.full((pred_batch.shape[0], 1, 3), (0, 0, 255), dtype=np.uint8)
+            pred_batch = np.concatenate((pred_batch, delim), axis=1)
+            img = np.concatenate((pred_batch, target_batch), axis=1)
+            
+
+            cv2.namedWindow('rgb_img', cv2.WINDOW_NORMAL)
+            cv2.imshow('rgb_img', img)
+            cv2.waitKey(1)
+ 
   
         return loss_inverse, loss_cos
 
@@ -329,6 +368,13 @@ class Agent(nn.Module):
             next_state = self.normalize_rows(next_state)
 
         next_state_gpu = torch.FloatTensor(np.array(next_state)).to(self.args.device)
+        state_gpu = torch.FloatTensor(state).to(self.args.device)
+        
+        # Flatten to get [batch_size, flattened sequences of images]
+        if self.args.has_images:
+            next_state_gpu = next_state_gpu.view(next_state_gpu.shape[0], -1)
+            state_gpu = state_gpu.view(state_gpu.shape[0], -1)
+
         next_state_Q_val = self.dqn_model(next_state_gpu)
         next_state_Q_val = next_state_Q_val.cpu().detach().numpy()
 
@@ -348,7 +394,7 @@ class Agent(nn.Module):
         Q_next = np.array(reward + done * self.args.gamma * next_state_Q_max, dtype=np.float)
         Q_next = torch.FloatTensor(Q_next)
 
-        Q_cur = self.dqn_model(torch.FloatTensor(state).to(self.args.device))
+        Q_cur = self.dqn_model(state_gpu)
         Q_cur = Q_cur.to('cpu') * torch.FloatTensor(recorded_action) # gets rid of zeros
         Q_cur = torch.sum(Q_cur, dim=1)   # sum one vect, leaving just qmax
 
@@ -361,7 +407,9 @@ class Agent(nn.Module):
 
 
     def update_target(self):
-            self.target_model.load_state_dict(self.dqn_model.state_dict())
+        if self.args.has_ddqn:
+            if self.total_steps % self.args.target_update == 0:
+                self.target_model.load_state_dict(self.dqn_model.state_dict())
 
     def update_priority(self, td_errors, idxs):
         # update priority
@@ -370,7 +418,7 @@ class Agent(nn.Module):
             self.memory.update(idx, td_errors[i]) 
 
 
-    def replay(self):     
+    def replay(self, is_terminal):     
         minibatch, idxs, importance_sampling_weight = self.memory.uniform_segment_batch(self.args.batch_size)
 
         state = np.stack(minibatch[:, 0])
@@ -406,9 +454,27 @@ class Agent(nn.Module):
         if self.epsilon > self.args.epsilon_floor:
             self.epsilon -= self.args.epsilon_decay
 
+        # remember loss results
+        self.e_loss_dqn.append(float(loss)) 
+
         if self.args.has_curiosity:
-            loss_cos = sum(loss_cos) / len(loss_cos)
-            return float(loss_dqn.detach().mean()), float(loss_inv), float(loss_cos), float(loss)
-        else:
-            return float(loss)
+            loss_cos_avg = sum(loss_cos) / len(loss_cos)
+            self.e_loss_inverse.append(float(loss_inv))
+            self.e_cos_distance.append(float(loss_cos_avg))
+            self.e_loss_combined.append(float(loss))
+        
+        if is_terminal:
+            dqn_avg = average(self.e_loss_dqn)
+            self.loss_dqn.append(dqn_avg)
+            self.ers.append(self.e_reward)
+
+            if self.args.has_curiosity:
+                inv_avg = average(self.e_loss_inverse)
+                cos_avg = average(self.e_cos_distance)
+                com_avg = average(self.e_loss_combined)
+                self.loss_inverse.append(inv_avg)
+                self.cos_distance.append(cos_avg)
+                self.loss_combined.append(com_avg)
+
+            
 
