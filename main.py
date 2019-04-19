@@ -9,7 +9,10 @@ from multiprocessing import Pool, Process, Lock
 import pandas as pd
 
 from agent import Agent
-
+from modules.args_utils import ArgsUtils
+from modules.csv_utils import CsvUtils
+from modules.file_utils import FileUtils
+from modules.logging_utils import LoggingUtils
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-mode', type=int, default=1, help='0 - compare agents, 1 - run single , 2 - multiprocess grid search')
@@ -66,10 +69,46 @@ parser.add_argument('-dqn_2_layer_out', type=int, default=32)
 parser.add_argument('-has_ddqn', type=int, default=0, help='Is double DQN enabled?')
 parser.add_argument('-target_update', type=float, default=10, help='Update target network after n steps')
 
-args = parser.parse_args()
+parser.add_argument('-id', default=0, type=int)
+parser.add_argument('-repeat_id', default=0, type=int)
+parser.add_argument('-report', default='report', type=str)
+parser.add_argument('-params_report', nargs='*', required=False)
+parser.add_argument('-name', help='Run name, by default date', default='test', type=str)
+
+args, args_other = parser.parse_known_args()
 
 logdir = "./logs/"
 save_dir = "save"
+
+tmp = [
+    'score', # add extra params that you are interested in
+    'test_loss'
+]
+if not args.params_report is None:
+    for it in reversed(args.params_report):
+        if not it in tmp:
+            tmp.insert(0, it)
+args.params_report = tmp
+args.params_report_local = args.params_report
+
+
+FileUtils.createDir('./tasks/' + args.report)
+run_path = './tasks/' + args.report + '/runs/' + args.name
+if os.path.exists(run_path):
+    shutil.rmtree(run_path, ignore_errors=True)
+    time.sleep(3)
+    while os.path.exists(run_path):
+        pass
+
+logging_utils = LoggingUtils(filename=os.path.join(run_path, 'log.txt'))
+is_logged_cnorm = False
+
+get_data_loaders = getattr(__import__('modules_core.' + args.datasource, fromlist=['get_data_loaders']), 'get_data_loaders')
+data_loader_train, data_loader_test = get_data_loaders(args)
+
+ArgsUtils.log_args(args, 'main.py', logging_utils)
+
+CsvUtils.create_local(args)
 
 if torch.cuda.is_available():
     print('cuda detected')
@@ -154,7 +193,7 @@ def save_model(agent, run, i_episode, folder_name):
             path = os.path.join(os.getcwd(), folder, name, file_name)
             torch.save(model.state_dict(), path)
         
-
+        #TODO use logging.info(f'..')
         print("saved checkpoint ar run: {}  |  i_episode: {}".format(run, i_episode))
 
 # This mode compares n agents
@@ -235,6 +274,14 @@ def evaluate():
             agent.print_debug(i_episode, exec_time=t)
 
             l.add_record(i_episode, agent.ers[-1])
+
+            if i_episode % 100 == 0: # every 100th episode
+                #TODO populate state (pass to agent)
+                state = {
+                    'score': 777 # key - value pairs that match params_report
+                }
+                CsvUtils.add_results_local(args, state)
+                CsvUtils.add_results(args, state)
 
             save_model(agent, run, i_episode, folder_name=save_folder)
 

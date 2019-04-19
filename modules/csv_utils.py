@@ -115,6 +115,7 @@ class CsvUtils(object):
             if args.name and len(args.name) > 0:
                 filename = './tasks/' + args.report + '/runs/' + args.name + '/' + args.name + '.csv'
                 if not os.path.exists(filename):
+                    FileUtils.createDir('./tasks/' + args.report + '/runs/' + args.name + '/')
                     headers = args.params_report_local
                     with open(filename, 'w') as outfile:
                         FileUtils.lock_file(outfile)
