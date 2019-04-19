@@ -118,6 +118,7 @@ class Agent(nn.Module):
             self.states_sequence = deque(maxlen=self.args.n_sequence_stack)
         else:
             self.n_states = self.env.observation_space.shape[0]
+
         
         self.n_actions = self.env.action_space.n
 
@@ -465,6 +466,7 @@ class Agent(nn.Module):
         reward = np.stack(minibatch[:, 2])
         next_state = np.stack(minibatch[:, 3])
         done = np.stack(minibatch[:, 4])
+
 
         # Row wise sate min-max normalization 
         if self.args.has_normalized_state:
