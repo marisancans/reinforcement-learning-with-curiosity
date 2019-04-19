@@ -1,4 +1,6 @@
 # pip install box2d-py
+import logging
+
 from visualdl import LogWriter # Has to be imported before everython elese, otherwise dumps
 import Box2D, os, shutil, datetime, time, random, sys, torch, argparse, gym, pandas
 from gym import envs
@@ -80,9 +82,11 @@ args, args_other = parser.parse_known_args()
 logdir = "./logs/"
 save_dir = "save"
 
+#TODO add necessary performance parameters
 tmp = [
     'score', # add extra params that you are interested in
-    'test_loss'
+    'loss',
+    'loss_dqn'
 ]
 if not args.params_report is None:
     for it in reversed(args.params_report):
@@ -194,7 +198,7 @@ def save_model(agent, run, i_episode, folder_name):
             torch.save(model.state_dict(), path)
         
         #TODO use logging.info(f'..')
-        print("saved checkpoint ar run: {}  |  i_episode: {}".format(run, i_episode))
+        logging.info(f'saved checkpoint ar run: {run}  |  i_episode: {i_episode}')
 
 # This mode compares n agents
 # ==== MODE 0 ======
@@ -278,7 +282,8 @@ def evaluate():
             if i_episode % 100 == 0: # every 100th episode
                 #TODO populate state (pass to agent)
                 state = {
-                    'score': 777 # key - value pairs that match params_report
+                    'score': 777, # key - value pairs that match params_report
+                    'best_score': 888
                 }
                 CsvUtils.add_results_local(args, state)
                 CsvUtils.add_results(args, state)

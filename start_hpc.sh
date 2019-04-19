@@ -6,7 +6,7 @@ python ./taskgen_v2.py \
 -is_hpc True \
 -hpc_feautre k40 \
 -hpc_cpu_count 12 \
--process_count_per_task 2y \
+-process_count_per_task 2 \
 -single_task False \
 -repeat 1 \
 -conda_env conda_env \

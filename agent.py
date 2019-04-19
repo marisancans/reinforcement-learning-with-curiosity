@@ -67,8 +67,9 @@ class EncoderModule(nn.Module):
         if self.has_images:
             self.seq = models.densenet161(pretrained=True).to(args.device)
             self.seq = nn.Sequential(*list(self.seq.children())[:-1]) # remove last layer
-            self.gap = nn.AvgPool2d(kernel_size=(6, 5))
-            self.linear = nn.Linear(in_features=2208, out_features=args.encoder_3_layer_out)
+            self.gap = nn.AdaptiveAvgPool2d(output_size=(1,1))
+            num_features = (self.seq.children()[:-1]).num_features
+            self.linear = nn.Linear(in_features=num_features, out_features=args.encoder_3_layer_out)
         else:
             self.seq = torch.nn.Sequential(
                 nn.Linear(in_features=n_states, out_features=args.encoder_1_layer_out),

@@ -4,7 +4,7 @@ source activate conda_env
 
 python ./taskgen_v2.py \
 -is_hpc False \
--process_count_per_task 2y \
+-process_count_per_task 2 \
 -single_task False \
 -repeat 1 \
 -conda_env conda_env \
