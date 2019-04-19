@@ -16,7 +16,10 @@ parser.add_argument('-m', '--mode', type=int, default=1, help='0 - compare agent
 parser.add_argument('-d', '--device', default='cpu', help='cpu or cuda')
 
 parser.add_argument('--debug', type=int, default=0, help='Extra print statements between episodes')
-parser.add_argument('--debug_states', type=int, default=0, help='Use opencv to peer into feature states')
+parser.add_argument('--debug_features', type=int, default=0, help='Use opencv to peer into feature states')
+parser.add_argument('--debug_images', type=int, default=0, help='Use opencv to debug stacked frames')
+parser.add_argument('--save_interval', type=int, default=100, help='Save model after n steps')
+parser.add_argument('--save', type=int, default=0, help='Save models?')
 
 parser.add_argument('-e', '--env_name', required=True,  help='OpenAI game enviroment name')
 parser.add_argument('-lr', '--learning_rate', type=float, default=0.001)
@@ -31,9 +34,10 @@ parser.add_argument('-nf', '--n_frames', type=int, default=9999, help='Number of
 parser.add_argument('--memory_size', type=int, default=10000, help="Replay memory size (This code uses sum tree, not deque)")
 
 parser.add_argument('--has_images', type=int, default=0, help='Whether or not the game state is an image')
-parser.add_argument('--image_scale', type=float, default=1, help='Image downscaling factor')
+parser.add_argument('--image_scale', type=float, default=1.0, help='Image downscaling factor')
 parser.add_argument('--n_sequence_stack', type=int, default=4, help='How many frames are in frame stack (deque)')
 parser.add_argument('--n_frame_skip', type=int, default=4, help='How many frames to skip, before pushing to frame stack')
+parser.add_argument('--image_crop', type=int, nargs='+', help='Coordinates to crop image, x1 y1 x2 y2')
 
 parser.add_argument('--parralel_runs', type=int, default=5, help="How many parralel agents to simulate")
 parser.add_argument('--n_processes', type=int, default=3, help="How many parralel processes to run (MODE 3)")
@@ -65,6 +69,7 @@ parser.add_argument('--target_update', type=float, default=10, help='Update targ
 args = parser.parse_args()
 
 logdir = "./logs/"
+save_dir = "save"
 
 if torch.cuda.is_available():
     print('cuda detected')
@@ -127,7 +132,30 @@ def log_comparison_agents(all_ers, names, folder_name):
     df = pd.DataFrame(data)
     df.to_csv(ex, mode='a', sep=',', header=f)
 
+def save_model(agent, run, i_episode, folder_name):
+    if i_episode % args.save_interval == 0:
+        folder = os.path.join(save_dir, folder_name)
+        
+        models = {}
+        models['dqn'] = agent.dqn_model
 
+        if agent.args.has_curiosity:
+            models['inverse'] = agent.inverse_model
+            models['forward'] = agent.forward_model
+            models['encoder'] = agent.encoder_model
+
+        for name in models:
+            fn = os.path.join(folder, name)
+            if not os.path.exists(fn):
+                os.makedirs(fn)
+
+        for name, model in models.items():
+            file_name = "{}__run_{}__i_ep_{}".format(name, run, i_episode)
+            path = os.path.join(os.getcwd(), folder, name, file_name)
+            torch.save(model.state_dict(), path)
+        
+
+        print("saved checkpoint ar run: {}  |  i_episode: {}".format(run, i_episode))
 
 # This mode compares n agents
 # ==== MODE 0 ======
@@ -180,6 +208,7 @@ def comparison():
 # run just one agent
 # ==== MODE 1 ======
 def evaluate():   
+    save_folder = datetime.datetime.now().strftime("%b-%d-%H:%M")
     all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
 
     logW = get_cleaned_logger(folder_name='eval')
@@ -206,6 +235,8 @@ def evaluate():
             agent.print_debug(i_episode, exec_time=t)
 
             l.add_record(i_episode, agent.ers[-1])
+
+            save_model(agent, run, i_episode, folder_name=save_folder)
 
         print('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
 

@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+#pip install opencv-python
 import random, gym, os, cv2, time
 from collections import deque
 from gym import envs
@@ -61,23 +62,37 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
 class EncoderModule(nn.Module):
     def __init__(self, args, n_states):
         super(EncoderModule, self).__init__()
+        self.has_images = args.has_images
 
-        self.seq = torch.nn.Sequential(
-            nn.Linear(in_features=n_states, out_features=args.encoder_1_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=args.encoder_1_layer_out, out_features=args.encoder_2_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=args.encoder_2_layer_out, out_features=args.encoder_3_layer_out),
-            nn.Tanh()
-        ) 
+        if self.has_images:
+            self.seq = models.densenet161(pretrained=True).to(args.device)
+            self.seq = nn.Sequential(*list(self.seq.children())[:-1]) # remove last layer
+            self.gap = nn.AvgPool2d(kernel_size=(6, 5))
+            self.linear = nn.Linear(in_features=2208, out_features=args.encoder_3_layer_out)
+        else:
+            self.seq = torch.nn.Sequential(
+                nn.Linear(in_features=n_states, out_features=args.encoder_1_layer_out),
+                nn.ReLU(),
+                nn.Linear(in_features=args.encoder_1_layer_out, out_features=args.encoder_2_layer_out),
+                nn.ReLU(),
+                nn.Linear(in_features=args.encoder_2_layer_out, out_features=args.encoder_3_layer_out),
+                nn.Tanh()
+            ) 
 
     def forward(self, x):
-        embedding = self.seq(x)
-        
-        # L2 normalization
-        norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
-        output_norm = embedding / norm
-        return output_norm
+        if self.has_images:
+            features = self.seq(x)
+            features = self.gap(features)
+            features = features.view(features.shape[0], -1)
+            features = self.linear(features)
+            return features
+        else:
+            embedding = self.seq(x)
+            
+            # L2 normalization
+            norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
+            output_norm = embedding / norm
+            return output_norm
 
 
 #-------------------- AGENT --------------------------
@@ -93,11 +108,13 @@ class Agent(nn.Module):
         self.env = gym.make(self.args.env_name)
         self.current_state = None # Gets set in self.reset_env()
 
+        
         # --------- STATE --------------- 
-        # if image, the state is scaled and cropped
+        # calcualte image dimensions to allow dynamc image resizes
         if self.args.has_images:
-            h, w, c = self.env.observation_space.shape
-            self.n_states = h * w * self.args.image_scale * self.args.n_sequence_stack# TODO implement scaling and cropping
+            h, w = self.calc_image_dims()
+            
+            self.n_states = int(h * w * self.args.n_sequence_stack)# TODO implement scaling and cropping
             self.states_sequence = deque(maxlen=self.args.n_sequence_stack)
         else:
             self.n_states = self.env.observation_space.shape[0]
@@ -115,17 +132,11 @@ class Agent(nn.Module):
         self.update_target()
 
         self.epsilon = 1.0
-
-        if self.args.has_images:
-            self.encoder_model = models.densenet161(pretrained=True)
-            # remove last layer
-            self.encoder_model = nn.Sequential(*list(self.encoder_model.children())[:-1])
-        else:
-            self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
-
+        
         if self.args.has_curiosity:
             self.inverse_model = self.build_inverse_model().to(self.args.device)
             self.forward_model = self.build_forward_model().to(self.args.device)
+            self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
 
             params = list(self.inverse_model.parameters()) + list(self.encoder_model.parameters()) + list(self.forward_model.parameters()) + list(self.dqn_model.parameters())
 
@@ -169,6 +180,11 @@ class Agent(nn.Module):
                 print('n_sequence_stack <= 1 or not passed in arguments')
                 os._exit(1)
 
+            if args.image_crop:
+                if len(args.image_crop) != 4:
+                    print("image_crop len must be 4! x1 y1 x2 y2")
+                    os._exit(1)
+    
     def build_dqn_model(self):
         return torch.nn.Sequential(
             nn.Linear(in_features=self.n_states, out_features=self.args.dqn_1_layer_out),
@@ -197,9 +213,36 @@ class Agent(nn.Module):
             nn.Linear(in_features=self.args.forward_2_layer_out, out_features=self.args.encoder_3_layer_out)
         )
 
+    def calc_image_dims(self):
+        h, w, c = self.env.observation_space.shape
+
+        # CROPPING
+        if self.args.image_crop:
+            x1, y1, x2, y2 = self.args.image_crop
+            h = y2 - y1
+            w = x2 - x1
+
+        # SCALING
+        s = self.args.image_scale
+        if s != 1:
+            h *= s
+            w *= s
+
+        return h, w 
+
     def preproprocess_frame(self, frame):
         # RGB 3 channels to grayscale 1 channel
-        return np.dot(frame[...,:3], [0.2989, 0.5870, 0.1140])
+        frame = np.dot(frame[...,:3], [0.2989, 0.5870, 0.1140])
+        
+        if self.args.image_crop:
+            x1, y1, x2, y2 = self.args.image_crop
+            frame = frame[y1:y2, x1:x2] 
+
+        s = self.args.image_scale
+        if s != 1:
+            frame = cv2.resize(frame, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR) # can test other interpolation types
+        
+        return frame
 
     def normalize_rows(self, x):
         for row_idx in range(x.shape[0]):
@@ -217,6 +260,21 @@ class Agent(nn.Module):
             self.states_sequence.append(blank) # height width
         else:
             self.states_sequence.append(processed)
+
+        # DEBUGGING
+        if self.args.debug_images:
+            img = np.array(self.states_sequence * 255, dtype = np.uint8)
+            
+            #img = np.stack((img,)*3, axis=-1)
+            img = np.concatenate((img[0], img[1], img[2]), axis=1)
+
+            cv2.namedWindow('sequence', cv2.WINDOW_NORMAL)
+            cv2.imshow('sequence', img)
+            
+            cv2.waitKey(1)
+            # 
+            # self.env.render()
+
         
         return np.stack(self.states_sequence)
 
@@ -314,26 +372,19 @@ class Agent(nn.Module):
 
         return action_idx, act_vector
 
-    def get_inverse_and_forward_loss(self, state, next_state, recorded_action):
-        # Row wise sate min-max normalization 
-        if self.args.has_normalized_state:
-            state = self.normalize_rows(state)
-            next_state = self.normalize_rows(next_state)
-
+    def get_inverse_and_forward_loss(self, state_tensor, next_state_tensor, recorded_action):
         # State encoding
-        state_tensor = torch.FloatTensor(state).to(self.args.device)
-        next_state_tensor = torch.FloatTensor(next_state).to(self.args.device)
-        encoded_state = self.encoder_model(state_tensor)
-        encoded_next_state = self.encoder_model(next_state_tensor)
-       
+        encoded_state = self.encoder_model.forward(state_tensor)
+        encoded_next_state = self.encoder_model.forward(next_state_tensor)
+
+
         # --------------- INVERSE MODEL -----------------------
         # transition from s to s_t+1 concatenated column-wise
         trans = torch.cat((encoded_state, encoded_next_state), dim=1)
 
         pred_action = self.inverse_model(trans)
-        pred_action = pred_action.to('cpu')
         
-        target_action = torch.FloatTensor(recorded_action)
+        target_action = torch.FloatTensor(recorded_action).to(self.args.device)
         loss_inverse = self.inverse_model_loss_fn(pred_action, target_action)
 
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
@@ -344,9 +395,10 @@ class Agent(nn.Module):
         loss_cos = F.cosine_similarity(pred_next_state, encoded_next_state, dim=1)  
         loss_cos = 1.0 - loss_cos
 
-        if self.args.debug_states:
-            pred_batch = np.array(pred_next_state.detach().numpy() * 255, dtype = np.uint8)
-            target_batch = np.array(encoded_next_state.detach().numpy() * 255, dtype = np.uint8)
+        # DEBUGGING
+        if self.args.debug_features:
+            pred_batch = np.array(pred_next_state.cpu().detach().numpy() * 255, dtype = np.uint8)
+            target_batch = np.array(encoded_next_state.cpu().detach().numpy() * 255, dtype = np.uint8)
             pred_batch = np.stack((pred_batch,)*3, axis=-1)
             target_batch = np.stack((target_batch,)*3, axis=-1)
 
@@ -355,26 +407,14 @@ class Agent(nn.Module):
             img = np.concatenate((pred_batch, target_batch), axis=1)
             
 
-            cv2.namedWindow('rgb_img', cv2.WINDOW_NORMAL)
-            cv2.imshow('rgb_img', img)
+            cv2.namedWindow('features', cv2.WINDOW_NORMAL)
+            cv2.imshow('features', img)
             cv2.waitKey(1)
  
   
         return loss_inverse, loss_cos
 
-    def train_dqn_model(self, state, recorded_action, reward, next_state, done, importance_sampling_weight):
-        if self.args.has_normalized_state:
-            state = self.normalize_rows(state)
-            next_state = self.normalize_rows(next_state)
-
-        next_state_gpu = torch.FloatTensor(np.array(next_state)).to(self.args.device)
-        state_gpu = torch.FloatTensor(state).to(self.args.device)
-        
-        # Flatten to get [batch_size, flattened sequences of images]
-        if self.args.has_images:
-            next_state_gpu = next_state_gpu.view(next_state_gpu.shape[0], -1)
-            state_gpu = state_gpu.view(state_gpu.shape[0], -1)
-
+    def train_dqn_model(self, state_gpu, recorded_action, reward, next_state_gpu, done, importance_sampling_weight):       
         next_state_Q_val = self.dqn_model(next_state_gpu)
         next_state_Q_val = next_state_Q_val.cpu().detach().numpy()
 
@@ -392,16 +432,15 @@ class Agent(nn.Module):
         # If the game has ended done=0, gets multiplied and extrinsic reward is just itself given this state
         # R(s, a) + gamma * max(Q'(s', a')
         Q_next = np.array(reward + done * self.args.gamma * next_state_Q_max, dtype=np.float)
-        Q_next = torch.FloatTensor(Q_next)
+        Q_next = torch.FloatTensor(Q_next).to(self.args.device)
 
         Q_cur = self.dqn_model(state_gpu)
-        Q_cur = Q_cur.to('cpu') * torch.FloatTensor(recorded_action) # gets rid of zeros
         Q_cur = torch.sum(Q_cur, dim=1)   # sum one vect, leaving just qmax
 
         loss_dqn = self.dqn_model_loss_fn(Q_cur, Q_next) # y_prim, y      LOOK OUT FOR REDUCE PARAMETER!
-        loss_dqn = (torch.tensor(importance_sampling_weight).float() * loss_dqn)
+        loss_dqn = (torch.tensor(importance_sampling_weight).float().to(self.args.device) * loss_dqn)
 
-        td_errors = np.abs(Q_next.detach().numpy() - Q_cur.detach().numpy())
+        td_errors = np.abs(Q_next.detach().cpu().numpy() - Q_cur.detach().cpu().numpy())
 
         return td_errors, loss_dqn
 
@@ -427,14 +466,29 @@ class Agent(nn.Module):
         next_state = np.stack(minibatch[:, 3])
         done = np.stack(minibatch[:, 4])
 
+        # Row wise sate min-max normalization 
+        if self.args.has_normalized_state:
+            state = self.normalize_rows(state)
+            next_state = self.normalize_rows(next_state)
+
+        state_gpu = torch.FloatTensor(state).to(self.args.device)
+        next_state_gpu = torch.FloatTensor(np.array(next_state)).to(self.args.device)
+
+
+
         # CURIOSITY
         if self.args.has_curiosity:
-            loss_inv, loss_cos = self.get_inverse_and_forward_loss(state, next_state, recorded_action)  
+            loss_inv, loss_cos = self.get_inverse_and_forward_loss(state_gpu, next_state_gpu, recorded_action)  
             intrinsic_reward = loss_cos * self.args.curiosity_scale
             reward = reward + intrinsic_reward.to("cpu").detach().numpy()
  
         # DQN MODEL 
-        td_errors, loss_dqn = self.train_dqn_model(state, recorded_action, reward, next_state, done, importance_sampling_weight)
+        # Flatten to get [batch_size, flattened sequences of images]
+        if self.args.has_images:
+            next_state_gpu = next_state_gpu.view(next_state_gpu.shape[0], -1)
+            state_gpu = state_gpu.view(state_gpu.shape[0], -1)
+
+        td_errors, loss_dqn = self.train_dqn_model(state_gpu, recorded_action, reward, next_state_gpu, done, importance_sampling_weight)
 
         # PER
         self.update_priority(td_errors, idxs)
