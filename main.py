@@ -16,60 +16,60 @@ from modules.csv_utils import CsvUtils
 from modules.file_utils import FileUtils
 from modules.logging_utils import LoggingUtils
 
+def arg_to_bool(x): return str(x).lower() == 'true'
+
 parser = argparse.ArgumentParser()
-parser.add_argument('-mode', type=int, default=1, help='0 - compare agents, 1 - run single , 2 - multiprocess grid search')
+parser.add_argument('-mode', default=1, type=int, help='0 - compare agents, 1 - run single , 2 - multiprocess grid search')
 parser.add_argument('-device', default='cpu', help='cpu or cuda')
 
-parser.add_argument('-debug', type=int, default=0, help='Extra print statements between episodes')
-parser.add_argument('-debug_features', type=int, default=0, help='Use opencv to peer into feature states')
-parser.add_argument('-debug_images', type=int, default=0, help='Use opencv to debug stacked frames')
-parser.add_argument('-save_interval', type=int, default=100, help='Save model after n steps')
-parser.add_argument('-save', type=int, default=0, help='Save models?')
+parser.add_argument('-debug', default=False, type=arg_to_bool, help='Extra print statements between episodes')
+parser.add_argument('-debug_features', default=False, type=arg_to_bool, help='Use opencv to peer into feature states')
+parser.add_argument('-debug_images', default=False, type=arg_to_bool, help='Use opencv to debug stacked frames')
+parser.add_argument('-save_interval', default=100, type=int, help='Save model after n steps')
 
-parser.add_argument('-env_name', required=True,  help='OpenAI game enviroment name')
-parser.add_argument('-learning_rate', type=float, default=0.001)
-parser.add_argument('-batch_size', type=int, default=32)
+parser.add_argument('-env_name', required=True, help='OpenAI game enviroment name')
+parser.add_argument('-learning_rate', default=0.001, type=float)
+parser.add_argument('-batch_size', default=32, type=int)
 
-parser.add_argument('-has_normalized_state', type=int, default=0, help='Normalize state vector in forward and inverse models? true | false')
-parser.add_argument('-epsilon_decay', type=float, required=True, help='Epslion decay for exploration / explotation policy')
-parser.add_argument('-epsilon_floor', type=float, default=0.01, help='Where epsilon stops to decay')
-parser.add_argument('-gamma', type=float, default=0.95, help='Hyperparameter for DQN')
-parser.add_argument('-n_episodes', type=int, default=50, help='Number of episodes (games) to be played')
-parser.add_argument('-n_frames', type=int, default=9999, help='Number of frames per one episode')
-parser.add_argument('-memory_size', type=int, default=10000, help="Replay memory size (This code uses sum tree, not deque)")
+parser.add_argument('-has_normalized_state', default=False, type=arg_to_bool, help='Normalize state vector in forward and inverse models? true | false')
+parser.add_argument('-epsilon_decay', required=True, type=float, help='Epslion decay for exploration / explotation policy')
+parser.add_argument('-epsilon_floor', default=0.01, type=float, help='Where epsilon stops to decay')
+parser.add_argument('-gamma', default=0.95, type=float, help='Hyperparameter for DQN')
+parser.add_argument('-n_episodes', default=50, type=int, help='Number of episodes (games) to be played')
+parser.add_argument('-n_frames', default=9999, type=int, help='Number of frames per one episode')
 
-parser.add_argument('-has_images', type=int, default=0, help='Whether or not the game state is an image')
-parser.add_argument('-image_scale', type=float, default=1.0, help='Image downscaling factor')
-parser.add_argument('-n_sequence_stack', type=int, default=4, help='How many frames are in frame stack (deque)')
-parser.add_argument('-n_frame_skip', type=int, default=4, help='How many frames to skip, before pushing to frame stack')
+parser.add_argument('-has_prioritized', default=True, type=arg_to_bool, help='Is priositized experience replay beeing used?')
+parser.add_argument('-memory_size', default=10000, type=int, help="Replay memory size (This code uses sum tree, not deque)")
+
+parser.add_argument('-has_images', default=False, type=arg_to_bool, help='Whether or not the game state is an image')
+parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
+parser.add_argument('-n_sequence', default=4, type=int, help='How many frames/channels will be passed in encoder')
+parser.add_argument('-n_frame_skip', default=4, type=int, help='How many frames to skip, before pushing to frame stack')
 parser.add_argument('-image_crop', type=int, nargs='+', help='Coordinates to crop image, x1 y1 x2 y2')
 
-parser.add_argument('-parralel_runs', type=int, default=5, help="How many parralel agents to simulate")
-parser.add_argument('-n_processes', type=int, default=3, help="How many parralel processes to run (MODE 3)")
+parser.add_argument('-parralel_runs', default=5, type=int, help="How many parralel agents to simulate")
+parser.add_argument('-n_processes', default=3, type=int, help="How many parralel processes to run (MODE 3)")
 
-parser.add_argument('-state_min_val', type=float, default=-1.0, help="Manual min value for feature encoder normalization")
-parser.add_argument('-state_max_val', type=float, default=-1.0, help="Manual max value for feature encoder normalization")
+parser.add_argument('-has_curiosity', default=False, type=arg_to_bool, required=True)
+parser.add_argument('-curiosity_beta', default=-1.0, type=float, help='Beta hyperparameter for curiosity module')
+parser.add_argument('-curiosity_lambda', default=-1.0, type=float, help='Lambda hyperparameter for curiosity module')
+parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
 
-parser.add_argument('-has_curiosity', type=int, required=True)
-parser.add_argument('-curiosity_beta', type=float, default=-1.0, help='Beta hyperparameter for curiosity module')
-parser.add_argument('-curiosity_lambda', type=float, default=-1.0, help='Lambda hyperparameter for curiosity module')
-parser.add_argument('-curiosity_scale', type=float, default=1.0, help='Intrinsic reward scale factor')
+parser.add_argument('-encoder_1_layer_out', default=5, type=int,)
+parser.add_argument('-encoder_2_layer_out', default=10, type=int,)
+parser.add_argument('-encoder_3_layer_out', default=15, type=int,)
 
-parser.add_argument('-encoder_1_layer_out', type=int, default=5)
-parser.add_argument('-encoder_2_layer_out', type=int, default=10)
-parser.add_argument('-encoder_3_layer_out', type=int, default=15)
+parser.add_argument('-inverse_1_layer_out', default=30, type=int,)
+parser.add_argument('-inverse_2_layer_out', default=20, type=int,)
 
-parser.add_argument('-inverse_1_layer_out', type=int, default=30)
-parser.add_argument('-inverse_2_layer_out', type=int, default=20)
+parser.add_argument('-forward_1_layer_out', default=30, type=int)
+parser.add_argument('-forward_2_layer_out', default=20, type=int)
 
-parser.add_argument('-forward_1_layer_out', type=int, default=30)
-parser.add_argument('-forward_2_layer_out', type=int, default=20)
+parser.add_argument('-dqn_1_layer_out', default=64, type=int,)
+parser.add_argument('-dqn_2_layer_out', default=32, type=int,)
 
-parser.add_argument('-dqn_1_layer_out', type=int, default=64)
-parser.add_argument('-dqn_2_layer_out', type=int, default=32)
-
-parser.add_argument('-has_ddqn', type=int, default=0, help='Is double DQN enabled?')
-parser.add_argument('-target_update', type=float, default=10, help='Update target network after n steps')
+parser.add_argument('-has_ddqn', type=arg_to_bool, default=False, help='Is double DQN enabled?')
+parser.add_argument('-target_update', default=10, type=int, help='Update target network after n steps')
 
 parser.add_argument('-id', default=0, type=int)
 parser.add_argument('-repeat_id', default=0, type=int)
@@ -92,25 +92,25 @@ if not args.params_report is None:
     for it in reversed(args.params_report):
         if not it in tmp:
             tmp.insert(0, it)
+
 args.params_report = tmp
 args.params_report_local = args.params_report
 
 
 FileUtils.createDir('./tasks/' + args.report)
 run_path = './tasks/' + args.report + '/runs/' + args.name
+
 if os.path.exists(run_path):
     shutil.rmtree(run_path, ignore_errors=True)
     time.sleep(3)
     while os.path.exists(run_path):
         pass
 
+FileUtils.createDir(run_path)
 logging_utils = LoggingUtils(filename=os.path.join(run_path, 'log.txt'))
 is_logged_cnorm = False
 
-get_data_loaders = getattr(__import__('modules_core.' + args.datasource, fromlist=['get_data_loaders']), 'get_data_loaders')
-data_loader_train, data_loader_test = get_data_loaders(args)
-
-ArgsUtils.log_args(args, 'main.py', logging_utils)
+#ArgsUtils.log_args(args, 'main.py', logging_utils)
 
 CsvUtils.create_local(args)
 
@@ -206,17 +206,17 @@ def comparison():
     # -------------------- Write all agents to test in here ----------------
     names = ['curious', 'curious_ddqn', 'dqn', 'ddqn']
 
-    args.has_curiosity = 0
+    args.has_curiosity = False
 
     curious_args = args
-    curious_args.has_curiosity = 1
+    curious_args.has_curiosity = True
 
     curious_ddqn_args = args
-    curious_ddqn_args.has_curiosity = 1
-    curious_ddqn_args.has_ddqn = 1
+    curious_ddqn_args.has_curiosity = True
+    curious_ddqn_args.has_ddqn = True
 
     ddqn_args = args
-    ddqn_args.has_ddqn = 1
+    ddqn_args.has_ddqn = True
 
     all_args = [curious_args, curious_ddqn_args, args, ddqn_args]
 
