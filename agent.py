@@ -7,7 +7,7 @@ import random, gym, os, cv2, time
 from gym import envs
 import numpy as np
 from collections import deque
-from sum_tree import SumTree
+from sum_tree import SumTree, Memory
 
 from collections import deque
 
@@ -15,48 +15,6 @@ def average(x):
     return sum(x) / len(x)
 
 
-
-#-------------------- MEMORY --------------------------
-class Memory:   # stored as ( s, a, r, s_ ) in SumTree
-    PER_e = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
-    PER_a = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
-    PER_b = 0.4  # importance-sampling, from initial value increasing to 1
-
-    def __init__(self, capacity):
-        self.tree = SumTree(capacity)
-
-    def _getPriority(self, error):
-        return (error + self.PER_e) ** self.PER_a
-
-    def add(self, error, transition):
-        p = self._getPriority(error)
-        self.tree.add(p, transition) 
-
-    def uniform_segment_batch(self, n):
-        batch = []
-        idx_arr = []
-        priority_arr = []
-        segment = self.tree.total() / n
-
-        for i in range(n):
-            a = segment * i
-            b = segment * (i + 1)
-
-            s = random.uniform(a, b)
-            (idx, p, data) = self.tree.get(s)
-            batch.append(data)
-            idx_arr.append(idx)
-            priority_arr.append(p)
-
-        sampling_probabilities = priority_arr / self.tree.total()
-        importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.PER_b)
-        importance_sampling_weight /= importance_sampling_weight.max()
-
-        return np.array(batch), np.array(idx_arr), importance_sampling_weight
-
-    def update(self, idx, error):
-        p = self._getPriority(error)
-        self.tree.update(idx, p)
 
 class EncoderModule(nn.Module):
     def __init__(self, args, n_states):
@@ -101,19 +59,24 @@ class EncoderModule(nn.Module):
                 for _ in range(new_dims):
                     rnd_channel = random.randint(0, conv0_pretrained_weights.shape[1] - 1)
                     conv0_pretrained_weights = torch.cat((conv0_pretrained_weights, conv0_pretrained_weights[:, rnd_channel:rnd_channel + 1, :]), dim=1)
-
+           
             self.dense._modules['features'][0] = conv0
 
-        self.dense = nn.Sequential(*list(self.dense.children())[:-1]) # remove last layer
-        self.gap = nn.AdaptiveAvgPool2d(output_size=(1,1))
+        self.dense._modules['classifier'] = nn.Linear(2208, self.args.encoder_3_layer_out)
+
+        #self.dense = nn.Sequential(*list(self.dense.children())[:-1]) # remove last layer
+        #self.gap = nn.AdaptiveAvgPool2d(output_size=(1,))
         self.num_features = nn.Sequential(*list(self.dense.children())[0])[-1].num_features # get output feature count from last layer
 
     def forward(self, x):
         if self.has_images:
             features = self.dense(x)
-            features = self.gap(features)
-            features = features.view(features.shape[0], -1)
-            features = self.linear(features)
+            
+            # features = self.gap(features)
+            # features = features.view(features.shape[0], -1)
+            # features = self.linear(features)
+            # features = F.tanh(features)
+           
             return features
         else:
             embedding = self.seq(x)
@@ -304,7 +267,7 @@ class Agent(nn.Module):
             
             cv2.waitKey(1)
             # 
-            self.env.render()
+            #self.env.render()
         
         return self.encode_sequence()
 
@@ -413,6 +376,22 @@ class Agent(nn.Module):
         pred_next_state = self.forward_model(cat_action_state)
         loss_cos = F.cosine_similarity(pred_next_state, next_state_t, dim=1)  
         loss_cos = 1.0 - loss_cos
+
+        # DEBUGGING
+        if self.args.debug_features:
+            pred_batch = np.array(pred_next_state.cpu().detach().numpy() * 255, dtype = np.uint8)
+            target_batch = np.array(next_state_t.cpu().detach().numpy() * 255, dtype = np.uint8)
+            pred_batch = np.stack((pred_batch,)*3, axis=-1)
+            target_batch = np.stack((target_batch,)*3, axis=-1)
+
+            delim = np.full((pred_batch.shape[0], 1, 3), (0, 0, 255), dtype=np.uint8)
+            pred_batch = np.concatenate((pred_batch, delim), axis=1)
+            img = np.concatenate((pred_batch, target_batch), axis=1)
+            
+
+            cv2.namedWindow('features', cv2.WINDOW_NORMAL)
+            cv2.imshow('features', img)
+            cv2.waitKey(1)
   
         return loss_inverse, loss_cos
 
