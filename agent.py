@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
-import random, gym, os, cv2, time
+import random, gym, os, cv2, time, re
 from gym import envs
 import numpy as np
 from collections import deque
@@ -15,19 +15,11 @@ def average(x):
     return sum(x) / len(x)
 
 
-
-class EncoderModule(nn.Module):
+class SimpleEncoderModule(nn.Module):
     def __init__(self, args, n_states):
-        super(EncoderModule, self).__init__()
-        self.has_images = args.has_images
-        self.args = args
-        self.n_state = n_states
+        super(SimpleEncoderModule, self).__init__()
 
-        if self.has_images:
-            self.init_densenet()
-            self.linear = nn.Linear(in_features=self.num_features, out_features=args.encoder_3_layer_out)
-        else:
-            self.seq = torch.nn.Sequential(
+        self.seq = torch.nn.Sequential(
                 nn.Linear(in_features=n_states, out_features=args.encoder_1_layer_out),
                 nn.ReLU(),
                 nn.Linear(in_features=args.encoder_1_layer_out, out_features=args.encoder_2_layer_out),
@@ -36,9 +28,58 @@ class EncoderModule(nn.Module):
                 nn.Tanh()
             ) 
 
-    def init_densenet(self):
-        self.dense = models.densenet161(pretrained=True).to(self.args.device)
+    def forward(self):
+        embedding = self.seq(x)
         
+        # L2 normalization
+        norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
+        output_norm = embedding / norm
+        return output_norm
+
+
+class Hook():
+    def __init__(self, module, backward=False):
+        if backward==False:
+            self.hook = module.register_forward_hook(self.hook_fn)
+        else:
+            self.hook = module.register_backward_hook(self.hook_fn)
+    def hook_fn(self, module, input, output):
+        self.input = input
+        self.output = output
+    def close(self):
+        self.hook.remove()
+
+class EncoderModule(nn.Module):
+    def __init__(self, args, n_states):
+        super(EncoderModule, self).__init__()
+        self.has_images = args.has_images
+        self.args = args
+        self.n_state = n_states
+
+        self.activations = {}
+        self.dense = models.densenet161(pretrained=True).to(self.args.device)
+        self.adjust_layers()
+      
+        
+        # Add hook to desired layer. This should be done with recursion
+        if args.debug_activations:
+            denseblock, denselayer, conv = args.debug_activations[0].split()
+            for name, module in self.dense.features.named_children():
+                if re.sub('denseblock([0-9]*)$',r'\1', name) == denseblock:
+                    for namedb, moduledb in module.named_children():
+                        if re.sub('denselayer([0-9]*)$',r'\1', namedb) == denselayer:
+                            for namel, modulel in moduledb.named_children():
+                                if re.sub('conv([0-9]*)$',r'\1', namel) == conv:
+                                    key = args.debug_activations[0]
+                                    modulel.register_forward_hook(self.get_activation(key))
+
+
+    def forward(self, x):
+        features = self.dense(x)
+               
+        return features
+
+    def adjust_layers(self):
         # The very first conv layer of dense net. This has to be adjusted to custom channel count
         conv0_pretrained = list(self.dense.features.children())[0] 
 
@@ -59,32 +100,17 @@ class EncoderModule(nn.Module):
                 for _ in range(new_dims):
                     rnd_channel = random.randint(0, conv0_pretrained_weights.shape[1] - 1)
                     conv0_pretrained_weights = torch.cat((conv0_pretrained_weights, conv0_pretrained_weights[:, rnd_channel:rnd_channel + 1, :]), dim=1)
-           
+                   
             self.dense._modules['features'][0] = conv0
 
         self.dense._modules['classifier'] = nn.Linear(2208, self.args.encoder_3_layer_out)
+        # self.num_features = nn.Sequential(*list(self.dense.children())[0])[-1].num_features # get output feature count from last layer
+    
 
-        #self.dense = nn.Sequential(*list(self.dense.children())[:-1]) # remove last layer
-        #self.gap = nn.AdaptiveAvgPool2d(output_size=(1,))
-        self.num_features = nn.Sequential(*list(self.dense.children())[0])[-1].num_features # get output feature count from last layer
-
-    def forward(self, x):
-        if self.has_images:
-            features = self.dense(x)
-            
-            # features = self.gap(features)
-            # features = features.view(features.shape[0], -1)
-            # features = self.linear(features)
-            # features = F.tanh(features)
-           
-            return features
-        else:
-            embedding = self.seq(x)
-            
-            # L2 normalization
-            norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
-            output_norm = embedding / norm
-            return output_norm
+    def get_activation(self, name):
+        def hook(model, input, output):
+            self.activations[name] = output.detach()
+        return hook
 
 
 #-------------------- AGENT --------------------------
@@ -162,7 +188,11 @@ class Agent(nn.Module):
         if args.has_images:
             if args.dqn_1_layer_out <= 64 or args.dqn_2_layer_out <= 32:
                 print('has_images enabled, but dqn_1_layer or dqn_2_layer out isnt changed, is this a mistake? Image feature vectors usually need bigger layers')
-    
+
+        if args.debug_activations and len(args.debug_activations[0].split()) != 3:
+            print('debug_activations len(args) != 3')
+            os._exit(0)
+
     def build_dqn_model(self):
         if self.args.has_curiosity:
             in_features = self.args.encoder_3_layer_out
@@ -256,20 +286,57 @@ class Agent(nn.Module):
             self.states_sequence.append(blank) # height width
         else:
             self.states_sequence.append(processed)
+
         # DEBUGGING
         if self.args.debug_images:
-            img = np.array(self.states_sequence * 255, dtype = np.uint8)
+            features = np.array(self.states_sequence * 255, dtype = np.uint8)
             
             #img = np.stack((img,)*3, axis=-1)
-            img = np.concatenate(img, axis=1)
+            features = np.concatenate(features, axis=1)
             cv2.namedWindow('sequence', cv2.WINDOW_NORMAL)
-            cv2.imshow('sequence', img)
+            cv2.imshow('sequence', features)
             
             cv2.waitKey(1)
             # 
             #self.env.render()
-        
-        return self.encode_sequence()
+
+        # DEBUGGING
+        if self.args.debug_images:
+            key = self.args.debug_activations[0]
+            features = self.encoder_model.activations[key]
+            features = features.squeeze(0).cpu().detach().numpy()
+            features = np.array(features * 255, dtype = np.uint8)
+
+            col_count = 10
+            height = features.shape[1]
+            width = features.shape[2]
+            blank_count = col_count - (features.shape[0] % col_count)
+            
+            # Fill missing feature maps with zeros
+            for i in range(blank_count):
+                blank = np.zeros(shape=(1, features.shape[1], features.shape[2]), dtype=np.uint8)
+                features = np.concatenate((features, blank))
+
+            # Merge all feature maps into 2D image
+            features = np.reshape(features, newshape=(-1, col_count, features.shape[1], features.shape[2]))
+            row_count = features.shape[0]
+            features = np.concatenate(features, axis=1)
+            features = np.concatenate(features, axis=1)
+
+            img = np.stack((features,)*3, axis=-1) # Make RGB
+            
+            # Make grid
+            for c, a, s in [[col_count, 1, width], [row_count, 0, height]]:
+                for i in range(1, c):
+                    pos = (s * i + i) - 1
+                    img = np.insert(img, pos, values=(229, 0, 225), axis=a) 
+
+            cv2.namedWindow('activations', cv2.WINDOW_NORMAL)
+            cv2.imshow('activations', img)
+            cv2.waitKey(1)
+
+        encoded_sequence = self.encode_sequence()
+        return encoded_sequence
 
     def print_debug(self, i_episode, exec_time):
         if self.args.debug:

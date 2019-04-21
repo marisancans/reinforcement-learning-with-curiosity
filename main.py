@@ -25,6 +25,8 @@ parser.add_argument('-device', default='cpu', help='cpu or cuda')
 parser.add_argument('-debug', default=False, type=arg_to_bool, help='Extra print statements between episodes')
 parser.add_argument('-debug_features', default=False, type=arg_to_bool, help='Use opencv to peer into feature states')
 parser.add_argument('-debug_images', default=False, type=arg_to_bool, help='Use opencv to debug stacked frames')
+parser.add_argument('-debug_activations', type=str, nargs='+', help='Show activation maps. Args: denseblock denselayer convlayer. Example: 1 13 2')
+
 parser.add_argument('-save_interval', default=100, type=int, help='Save model after n steps')
 
 parser.add_argument('-env_name', required=True, help='OpenAI game enviroment name')
