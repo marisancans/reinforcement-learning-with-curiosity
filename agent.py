@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+from modules.torch_utils import init_parameters
+
 import random, gym, os, cv2, time, re
 from gym import envs
 import numpy as np
@@ -143,6 +145,8 @@ class Agent(nn.Module):
 
         # MODELS
         self.dqn_model = self.build_dqn_model().to(self.args.device)
+        self.dqn_model = init_parameters('dqn', self.dqn_model)
+
         self.target_model = self.build_dqn_model().to(self.args.device)
         self.dqn_model_loss_fn = nn.MSELoss()
 
@@ -156,9 +160,13 @@ class Agent(nn.Module):
                 self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
             else:
                 self.encoder_model = SimpleEncoderModule(self.args, self.n_states).to(self.args.device)
+                self.encoder_model = init_parameters('simple encoder', self.encoder_model)
 
             self.inverse_model = self.build_inverse_model().to(self.args.device)
+            self.inverse_model = init_parameters('inverse', self.inverse_model)
+
             self.forward_model = self.build_forward_model().to(self.args.device)
+            self.forward_model = init_parameters('forward', self.forward_model)
 
             params = list(self.inverse_model.parameters()) + list(self.encoder_model.parameters()) + list(self.forward_model.parameters()) + list(self.dqn_model.parameters())
 
@@ -175,7 +183,11 @@ class Agent(nn.Module):
         else:
             self.optimizer = torch.optim.Adam(params=self.dqn_model.parameters(), lr = self.args.learning_rate)
 
-        self.memory = Memory(capacity=self.args.memory_size)
+        if self.args.has_prioritized:
+            self.memory = Memory(capacity=self.args.memory_size)
+        else:
+            self.memory = deque(maxlen=self.args.memory_size)
+
         self.loss_dqn = [0]
         self.ers = [0]
         
@@ -394,15 +406,23 @@ class Agent(nn.Module):
 
         transition = [self.current_state, act_values, reward, next_state, done]
         
-        self.memory.add(error=10000, transition=transition) # because its initially unknown and has to be high priority
+        if self.args.has_prioritized:
+            self.memory.add(error=10000, transition=transition) # because its initially unknown and has to be high priority
+        else:
+            self.memory.append(transition)
+
         self.e_reward += reward
         self.current_state = next_state
         
         self.update_target()
 
          # Pre populate memory before replay
-        if self.memory.tree.n_entries > self.args.batch_size:
-            self.replay(is_done)
+        if self.args.has_prioritized:
+            if self.memory.tree.n_entries > self.args.batch_size:
+                self.replay(is_done)
+        else:
+            if len(self.memory) > self.args.batch_size:
+                self.replay(is_done)
 
         self.total_steps += 1
         self.current_step += 1
@@ -522,7 +542,9 @@ class Agent(nn.Module):
         Q_cur = torch.sum(Q_cur, dim=1)   # sum one vect, leaving just qmax
 
         loss_dqn = self.dqn_model_loss_fn(Q_cur, Q_next) # y_prim, y      LOOK OUT FOR REDUCE PARAMETER!
-        loss_dqn = (torch.FloatTensor(importance_sampling_weight).to(self.args.device) * loss_dqn)
+
+        if importance_sampling_weight is not None:
+            loss_dqn = (torch.FloatTensor(importance_sampling_weight).to(self.args.device) * loss_dqn)
 
         td_errors = np.abs(Q_next.cpu().detach().numpy() - Q_cur.cpu().detach().numpy())
 
@@ -543,9 +565,22 @@ class Agent(nn.Module):
             if self.total_steps % self.args.target_update == 0:
                 self.target_model.load_state_dict(self.dqn_model.state_dict())
 
+    def sample_batch(self):
+        buffer_size = len(self.memory)
+        index = np.random.choice(np.arange(buffer_size),
+                                size = self.args.batch_size,
+                                replace = False)
+        
+        return np.array([self.memory[i] for i in index])
+
 
     def replay(self, is_terminal):     
-        minibatch, idxs, importance_sampling_weight = self.memory.uniform_segment_batch(self.args.batch_size)
+        if self.args.has_prioritized:
+            minibatch, idxs, importance_sampling_weight = self.memory.uniform_segment_batch(self.args.batch_size)
+        else:
+            minibatch = self.sample_batch()
+            idxs = None
+            importance_sampling_weight = None
 
         state = np.stack(minibatch[:, 0])
         recorded_action = np.stack(minibatch[:, 1])
@@ -571,7 +606,8 @@ class Agent(nn.Module):
         td_errors, loss_dqn = self.train_dqn_model(state_t, recorded_action, reward, next_state_t, done, importance_sampling_weight)
 
         # PER
-        self.update_priority(td_errors, idxs)
+        if self.args.has_prioritized:
+            self.update_priority(td_errors, idxs)
 
         # LOSS
         if self.args.has_curiosity:
