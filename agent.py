@@ -24,7 +24,7 @@ class SimpleEncoderModule(nn.Module):
                 nn.ReLU(),
                 nn.Linear(in_features=args.encoder_1_layer_out, out_features=args.encoder_2_layer_out),
                 nn.ReLU(),
-                nn.Linear(in_features=args.encoder_2_layer_out, out_features=args.encoder_3_layer_out),
+                nn.Linear(in_features=args.encoder_2_layer_out, out_features=args.encoder_out),
                 nn.Tanh()
             ) 
 
@@ -103,7 +103,7 @@ class EncoderModule(nn.Module):
                    
             self.dense._modules['features'][0] = conv0
 
-        self.dense._modules['classifier'] = nn.Linear(2208, self.args.encoder_3_layer_out)
+        self.dense._modules['classifier'] = nn.Linear(2208, self.args.encoder_last_layer_out)
         # self.num_features = nn.Sequential(*list(self.dense.children())[0])[-1].num_features # get output feature count from last layer
     
 
@@ -195,35 +195,45 @@ class Agent(nn.Module):
 
     def build_dqn_model(self):
         if self.args.has_curiosity:
-            in_features = self.args.encoder_3_layer_out
+            in_features = self.args.encoder_last_layer_out
         else:
             in_features = self.n_states
 
         return torch.nn.Sequential(
             nn.Linear(in_features=in_features, out_features=self.args.dqn_1_layer_out),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.args.dqn_2_layer_out),
-            nn.LeakyReLU(),
-            nn.Linear(in_features=self.args.dqn_2_layer_out, out_features=self.n_actions),
+            nn.ReLU(),
+            nn.Linear(in_features=self.args.dqn_2_layer_out, out_features=self.args.dqn_3_layer_out),
+            nn.ReLU(),
+            nn.Linear(in_features=self.args.dqn_3_layer_out, out_features=self.args.dqn_4_layer_out),
+            nn.ReLU(),
+            nn.Linear(in_features=self.args.dqn_4_layer_out, out_features=self.n_actions),
         )
 
     def build_inverse_model(self):
         # multiply by 2 because we have 2 concated vectors
         return torch.nn.Sequential(
-            nn.Linear(in_features=self.args.encoder_3_layer_out * 2, out_features=self.args.inverse_1_layer_out),
+            nn.Linear(in_features=self.args.encoder_last_layer_out * 2, out_features=self.args.inverse_1_layer_out),
             nn.ReLU(),
             nn.Linear(in_features=self.args.inverse_1_layer_out, out_features=self.args.inverse_2_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=self.args.inverse_2_layer_out, out_features=self.n_actions)
+            nn.Linear(in_features=self.args.inverse_2_layer_out, out_features=self.args.inverse_3_layer_out),
+            nn.ReLU(),
+            nn.Linear(in_features=self.args.inverse_3_layer_out, out_features=self.args.inverse_4_layer_out),
+            nn.ReLU(),
+            nn.Linear(in_features=self.args.inverse_4_layer_out, out_features=self.n_actions)
         )
 
     def build_forward_model(self):
         return torch.nn.Sequential(
-            nn.Linear(in_features=self.args.encoder_3_layer_out + self.n_actions, out_features=self.args.forward_1_layer_out), # input actions are one hot encoded
+            nn.Linear(in_features=self.args.encoder_last_layer_out + self.n_actions, out_features=self.args.forward_1_layer_out), # input actions are one hot encoded
             nn.ReLU(),
             nn.Linear(in_features=self.args.forward_1_layer_out, out_features=self.args.forward_2_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=self.args.forward_2_layer_out, out_features=self.args.encoder_3_layer_out)
+            nn.Linear(in_features=self.args.forward_2_layer_out, out_features=self.args.forward_3_layer_out),
+            nn.ReLU(),
+            nn.Linear(in_features=self.args.forward_3_layer_out, out_features=self.args.encoder_last_layer_out)
         )
 
     def calc_image_dims(self):
@@ -344,14 +354,14 @@ class Agent(nn.Module):
             ers = self.ers[-1]
 
             if self.args.debug:
-                info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.2f}   |    dqn:  {dqn_loss:.2f}   |   ers:  {ers:.2f}   |   time: {exec_time:.2f}"
+                info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.4f}   |    dqn:  {dqn_loss:.4f}   |   ers:  {ers:.4f}   |   time: {exec_time:.4f}"
                 
                 if self.args.has_curiosity:
                     loss_combined = self.loss_combined[-1]
                     loss_inverse = self.loss_inverse[-1] 
                     cos_distance = self.cos_distance[-1] 
 
-                    info += f"   |   com: {loss_combined:.2f}    |    inv: {loss_inverse:.2f}   |   cos: {cos_distance:.2f}"
+                    info += f"   |   com: {loss_combined:.4f}    |    inv: {loss_inverse:.4f}   |   cos: {cos_distance:.4f}"
 
                 print(info)
 
