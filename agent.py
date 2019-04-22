@@ -299,54 +299,55 @@ class Agent(nn.Module):
 
         # DEBUGGING
         if self.args.debug_images:
-            features = np.array(self.states_sequence * 255, dtype = np.uint8)
-            
-            #img = np.stack((img,)*3, axis=-1)
-            features = np.concatenate(features, axis=1)
-            cv2.namedWindow('sequence', cv2.WINDOW_NORMAL)
-            cv2.imshow('sequence', features)
-            
-            cv2.waitKey(1)
-            # 
-            #self.env.render()
-
-        # DEBUGGING
-        if self.args.debug_images:
-            key = self.args.debug_activations[0]
-            features = self.encoder_model.activations[key]
-            features = features.squeeze(0).cpu().detach().numpy()
-            features = np.array(features * 255, dtype = np.uint8)
-
-            col_count = 10
-            height = features.shape[1]
-            width = features.shape[2]
-            blank_count = col_count - (features.shape[0] % col_count)
-            
-            # Fill missing feature maps with zeros
-            for i in range(blank_count):
-                blank = np.zeros(shape=(1, features.shape[1], features.shape[2]), dtype=np.uint8)
-                features = np.concatenate((features, blank))
-
-            # Merge all feature maps into 2D image
-            features = np.reshape(features, newshape=(-1, col_count, features.shape[1], features.shape[2]))
-            row_count = features.shape[0]
-            features = np.concatenate(features, axis=1)
-            features = np.concatenate(features, axis=1)
-
-            img = np.stack((features,)*3, axis=-1) # Make RGB
-            
-            # Make grid
-            for c, a, s in [[col_count, 1, width], [row_count, 0, height]]:
-                for i in range(1, c):
-                    pos = (s * i + i) - 1
-                    img = np.insert(img, pos, values=(229, 0, 225), axis=a) 
-
-            cv2.namedWindow('activations', cv2.WINDOW_NORMAL)
-            cv2.imshow('activations', img)
-            cv2.waitKey(1)
+            self.debug_sequence()
 
         encoded_sequence = self.encode_sequence()
         return encoded_sequence
+
+    def debug_sequence(self):
+        features = np.array(self.states_sequence * 255, dtype = np.uint8)
+        
+        #img = np.stack((img,)*3, axis=-1)
+        features = np.concatenate(features, axis=1)
+        cv2.namedWindow('sequence', cv2.WINDOW_NORMAL)
+        cv2.imshow('sequence', features)
+        
+        cv2.waitKey(1)
+        # 
+        #self.env.render()
+
+        key = self.args.debug_activations[0]
+        features = self.encoder_model.activations[key]
+        features = features.squeeze(0).cpu().detach().numpy()
+        features = np.array(features * 255, dtype = np.uint8)
+
+        col_count = 10
+        height = features.shape[1]
+        width = features.shape[2]
+        blank_count = col_count - (features.shape[0] % col_count)
+        
+        # Fill missing feature maps with zeros
+        for i in range(blank_count):
+            blank = np.zeros(shape=(1, features.shape[1], features.shape[2]), dtype=np.uint8)
+            features = np.concatenate((features, blank))
+
+        # Merge all feature maps into 2D image
+        features = np.reshape(features, newshape=(-1, col_count, features.shape[1], features.shape[2]))
+        row_count = features.shape[0]
+        features = np.concatenate(features, axis=1)
+        features = np.concatenate(features, axis=1)
+
+        img = np.stack((features,)*3, axis=-1) # Make RGB
+        
+        # Make grid
+        for c, a, s in [[col_count, 1, width], [row_count, 0, height]]:
+            for i in range(1, c):
+                pos = (s * i + i) - 1
+                img = np.insert(img, pos, values=(229, 0, 225), axis=a) 
+
+        cv2.namedWindow('activations', cv2.WINDOW_NORMAL)
+        cv2.imshow('activations', img)
+        cv2.waitKey(1)
 
     def print_debug(self, i_episode, exec_time):
         if self.args.debug:
@@ -354,7 +355,7 @@ class Agent(nn.Module):
             ers = self.ers[-1]
 
             if self.args.debug:
-                info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.4f}   |    dqn:  {dqn_loss:.4f}   |   ers:  {ers:.4f}   |   time: {exec_time:.4f}"
+                info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.4f}   |    dqn:  {dqn_loss:.4f}   |   ers:  {ers:.2f}   |   time: {exec_time:.4f}"
                 
                 if self.args.has_curiosity:
                     loss_combined = self.loss_combined[-1]

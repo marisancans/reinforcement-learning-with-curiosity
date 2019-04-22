@@ -117,7 +117,7 @@ FileUtils.createDir(run_path)
 logging_utils = LoggingUtils(filename=os.path.join(run_path, 'log.txt'))
 is_logged_cnorm = False
 
-#ArgsUtils.log_args(args, 'main.py', logging_utils)
+ArgsUtils.log_args(args, 'main.py', logging_utils)
 
 CsvUtils.create_local(args)
 
