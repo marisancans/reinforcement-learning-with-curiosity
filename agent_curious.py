@@ -239,22 +239,26 @@ class AgentCurious(AgentDQN):
         cv2.imshow('activations', img)
         cv2.waitKey(1)
 
+       
     def print_debug(self, i_episode, exec_time):
         if self.args.debug:
             dqn_loss = self.loss_dqn[-1]
             ers = self.ers[-1]
-
-            if self.args.debug:
-                info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.4f}   |    dqn:  {dqn_loss:.4f}   |   ers:  {ers:.2f}   |   time: {exec_time:.4f}"
+            info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.4f}   |    dqn:  {dqn_loss:.4f}   |   ers:  {ers:.2f}   |   time: {exec_time:.4f}"
                 
-                if self.args.has_curiosity:
-                    loss_combined = self.loss_combined[-1]
-                    loss_inverse = self.loss_inverse[-1] 
-                    cos_distance = self.cos_distance[-1] 
+            return info
 
-                    info += f"   |   com: {loss_combined:.4f}    |    inv: {loss_inverse:.4f}   |   cos: {cos_distance:.4f}"
+    def print_debug(self, i_episode, exec_time):
+        dqn_info = super(AgentCurious, self).print_debug(i_episode, exec_time)
+        
+        if self.args.debug:
+            loss_combined = self.loss_combined[-1]
+            loss_inverse = self.loss_inverse[-1] 
+            cos_distance = self.cos_distance[-1] 
 
-                print(info)
+            info = f"   |   com: {loss_combined:.4f}    |    inv: {loss_inverse:.4f}   |   cos: {cos_distance:.4f}"
+
+            return dqn_info + info
 
 
     def get_inverse_and_forward_loss(self, state_t, next_state_t, recorded_action):
@@ -359,15 +363,7 @@ class AgentCurious(AgentDQN):
             next_state = self.encode_state(next_state) # TODO - This encodes each state, its slow
 
         transition = [self.current_state, act_values, reward, next_state, done]
-        self.memory.add(transition)
-
-        x = to_numpy(next_state)
-        ac = to_numpy(self.current_state)
-
-        if np.isnan(x).any() or np.isnan(ac).any():
-            a = 1
-        
-       
+        self.memory.add(transition)   
 
         self.current_state = next_state
 

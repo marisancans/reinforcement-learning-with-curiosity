@@ -285,7 +285,7 @@ def evaluate():
                              
             all_ers[run][i_episode] = agent.ers[-1]
             t = time.time() - start
-            #print(agent.print_debug(i_episode, exec_time=t))
+            print(agent.print_debug(i_episode, exec_time=t))
 
             l.add_record(i_episode, agent.ers[-1])
 

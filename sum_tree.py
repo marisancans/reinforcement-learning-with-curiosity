@@ -35,13 +35,7 @@ class SumTree:
         return self.tree[0]
 
     def add(self, priority, data):
-        if not self.tree[0]:
-            print(self.tree[0])
         idx = self.write + self.capacity - 1
-
-        # x = 
-        # if np.isnan(x).any():
-        #     a = 1
 
         self.data[self.write] = data
         self.update(idx, priority)
