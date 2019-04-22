@@ -1,5 +1,6 @@
 import numpy as np
-import random
+import random, math
+from collections import deque
 
 class SumTree:
     write = 0
@@ -34,7 +35,13 @@ class SumTree:
         return self.tree[0]
 
     def add(self, priority, data):
+        if not self.tree[0]:
+            print(self.tree[0])
         idx = self.write + self.capacity - 1
+
+        # x = 
+        # if np.isnan(x).any():
+        #     a = 1
 
         self.data[self.write] = data
         self.update(idx, priority)
@@ -62,26 +69,47 @@ class SumTree:
 
 
 #-------------------- MEMORY --------------------------
+# Memory is either deque where batch is uniformly sampled or sumtree with prioritized selection
 class Memory:   # stored as ( s, a, r, s_ ) in SumTree
     PER_e = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
     PER_a = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
     PER_b = 0.4  # importance-sampling, from initial value increasing to 1
 
-    def __init__(self, capacity):
-        self.tree = SumTree(capacity)
+    def __init__(self, capacity, is_per):
+        if is_per:
+            self.tree = SumTree(capacity)
+        else:
+            self.mem = deque(maxlen=capacity)
+
+        self.is_per = is_per
 
     def _getPriority(self, error):
         return (error + self.PER_e) ** self.PER_a
 
-    def add(self, error, transition):
-        p = self._getPriority(error)
-        self.tree.add(p, transition) 
+    def get_entries(self):
+        return self.tree.n_entries if self.is_per else len(self.mem)
+
+    def add(self, transition, error=10000):  # because its initially unknown and has to be high priority
+        if self.is_per:
+            p = self._getPriority(error)
+            self.tree.add(p, transition) 
+        else:
+            self.mem.append(transition)
+
+
+    def get_batch(self, n):
+        return self.uniform_segment_batch(n) if self.is_per else self.random_batch(n)
 
     def uniform_segment_batch(self, n):
         batch = []
         idx_arr = []
         priority_arr = []
         segment = self.tree.total() / n
+        
+        if math.isnan(self.tree.total()):
+            x = 0
+
+        
 
         for i in range(n):
             a = segment * i
@@ -98,6 +126,13 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
         importance_sampling_weight /= importance_sampling_weight.max()
 
         return np.array(batch), np.array(idx_arr), importance_sampling_weight
+
+    def random_batch(self, n):
+        buffer_size = len(self.mem)
+        index = np.random.choice(np.arange(buffer_size), size = n, replace = False)
+        batch = np.array([self.mem[i] for i in index])
+
+        return batch, None, None
 
     def update(self, idx, error):
         p = self._getPriority(error)

@@ -1,14 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as models
 
 from modules.torch_utils import init_parameters
 
-import random, gym, os, cv2, time, re
+import random, gym, os, cv2, time, re, gc
 from gym import envs
 import numpy as np
-from collections import deque
 from sum_tree import SumTree, Memory
 
 from collections import deque
@@ -201,10 +199,6 @@ class Agent(nn.Module):
                 print("Curiosity enabled but lambda or beta value hasnt been set!")
                 os._exit(1)
 
-        if args.has_images:
-            if args.dqn_1_layer_out <= 64 or args.dqn_2_layer_out <= 32:
-                print('has_images enabled, but dqn_1_layer or dqn_2_layer out isnt changed, is this a mistake? Image feature vectors usually need bigger layers')
-
         if args.debug_activations and len(args.debug_activations[0].split()) != 3:
             print('debug_activations len(args) != 3')
             os._exit(0)
@@ -293,7 +287,7 @@ class Agent(nn.Module):
         states_stack_t = torch.unsqueeze(states_stack_t, 0) # Add batch dimension
         encoded_state = self.encoder_model(states_stack_t)
         encoded_state = encoded_state.squeeze() # remove batch dimension
-        return encoded_state.cpu().detach().numpy()
+        return encoded_state
 
     def preproprocess_frame(self, frame):
         # RGB 3 channels to grayscale 1 channel
@@ -404,6 +398,9 @@ class Agent(nn.Module):
         if self.args.has_images:
             next_state = self.get_next_sequence(next_state, is_done)
 
+        current_state = self.current_state.detach()
+        next_state = next_state.detach()
+
         transition = [self.current_state, act_values, reward, next_state, done]
         
         if self.args.has_prioritized:
@@ -434,7 +431,7 @@ class Agent(nn.Module):
 
         if self.args.has_curiosity:
             if self.args.has_images:
-                self.current_state = self.init_current_state(state)
+                self.current_state = self.init_current_state(state).detach()
             else:
                 self.current_state = self.encode_state(state)
         else:
@@ -467,12 +464,12 @@ class Agent(nn.Module):
             return action_idx, act_vector
 
         # Exploitation
-        state_gpu = torch.tensor(self.current_state).float().to(self.args.device)
+        state_t = self.current_state
 
         if self.args.has_images:
-            state_gpu = state_gpu.view(-1)
+            state_t = state_t.view(-1)
 
-        act_values = self.dqn_model(state_gpu)  # Predict action based on state
+        act_values = self.dqn_model(state_t)  # Predict action based on state
         act_values = act_values.cpu().detach().numpy()
 
         action_idx = np.argmax(act_values)
@@ -582,14 +579,12 @@ class Agent(nn.Module):
             idxs = None
             importance_sampling_weight = None
 
-        state = np.stack(minibatch[:, 0])
+        state_t = torch.stack(tuple(minibatch[:, 0]))
         recorded_action = np.stack(minibatch[:, 1])
         reward = np.stack(minibatch[:, 2])
-        next_state = np.stack(minibatch[:, 3])
+        next_state_t = torch.stack(tuple(minibatch[:, 3]))
         done = np.stack(minibatch[:, 4])
 
-        state_t = torch.FloatTensor(state).to(self.args.device)
-        next_state_t = torch.FloatTensor(next_state).to(self.args.device)
 
         # CURIOSITY
         if self.args.has_curiosity:

@@ -11,6 +11,9 @@ from multiprocessing import Pool, Process, Lock
 import pandas as pd
 
 from agent import Agent
+from agent_dqn import AgentDQN
+from agent_curious import AgentCurious
+
 from modules.args_utils import ArgsUtils
 from modules.csv_utils import CsvUtils
 from modules.file_utils import FileUtils
@@ -57,9 +60,10 @@ parser.add_argument('-curiosity_beta', default=-1.0, type=float, help='Beta hype
 parser.add_argument('-curiosity_lambda', default=-1.0, type=float, help='Lambda hyperparameter for curiosity module')
 parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
 
-parser.add_argument('-encoder_1_layer_out', default=5, type=int,)
-parser.add_argument('-encoder_2_layer_out', default=10, type=int,)
-parser.add_argument('-encoder_last_layer_out', default=15, type=int,)
+parser.add_argument('-simple_encoder_1_layer_out', default=5, type=int)
+parser.add_argument('-simple_encoder_2_layer_out', default=10, type=int)
+
+parser.add_argument('-encoder_layer_out', default=15, type=int,)
 
 parser.add_argument('-inverse_1_layer_out', default=30, type=int,)
 parser.add_argument('-inverse_2_layer_out', default=25, type=int,)
@@ -117,7 +121,7 @@ FileUtils.createDir(run_path)
 logging_utils = LoggingUtils(filename=os.path.join(run_path, 'log.txt'))
 is_logged_cnorm = False
 
-ArgsUtils.log_args(args, 'main.py', logging_utils)
+#ArgsUtils.log_args(args, 'main.py', logging_utils)
 
 CsvUtils.create_local(args)
 
@@ -265,7 +269,7 @@ def evaluate():
    
     for run in range(args.parralel_runs):
         start_run = time.time()
-        agent = Agent(args, name='curious')
+        agent = AgentCurious(args, name='curious')
         
         with logW.mode('run: ' + str(run)):
             l = logW.scalar('ers')
@@ -276,13 +280,12 @@ def evaluate():
             is_done = False
             
             while not is_done:
-                #agent.env.render()
                 is_done = agent.play_step()
                 
                              
             all_ers[run][i_episode] = agent.ers[-1]
             t = time.time() - start
-            agent.print_debug(i_episode, exec_time=t)
+            #print(agent.print_debug(i_episode, exec_time=t))
 
             l.add_record(i_episode, agent.ers[-1])
 
