@@ -72,8 +72,8 @@ parser.add_argument('-forward_3_layer_out', default=20, type=int)
 
 parser.add_argument('-dqn_1_layer_out', default=15, type=int,)
 parser.add_argument('-dqn_2_layer_out', default=15, type=int,)
-parser.add_argument('-dqn_3_layer_out', default=8, type=int,)
-parser.add_argument('-dqn_4_layer_out', default=1, type=int,)
+parser.add_argument('-dqn_3_layer_out', default=10, type=int,)
+parser.add_argument('-dqn_4_layer_out', default=10, type=int,)
 
 parser.add_argument('-has_ddqn', type=arg_to_bool, default=False, help='Is double DQN enabled?')
 parser.add_argument('-target_update', default=10, type=int, help='Update target network after n steps')

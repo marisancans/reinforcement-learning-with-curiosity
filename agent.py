@@ -24,11 +24,11 @@ class SimpleEncoderModule(nn.Module):
                 nn.ReLU(),
                 nn.Linear(in_features=args.encoder_1_layer_out, out_features=args.encoder_2_layer_out),
                 nn.ReLU(),
-                nn.Linear(in_features=args.encoder_2_layer_out, out_features=args.encoder_out),
+                nn.Linear(in_features=args.encoder_2_layer_out, out_features=args.encoder_last_layer_out),
                 nn.Tanh()
             ) 
 
-    def forward(self):
+    def forward(self, x):
         embedding = self.seq(x)
         
         # L2 normalization
@@ -152,7 +152,11 @@ class Agent(nn.Module):
         self.update_target()
 
         if self.args.has_curiosity:
-            self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
+            if self.args.has_images:
+                self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
+            else:
+                self.encoder_model = SimpleEncoderModule(self.args, self.n_states).to(self.args.device)
+
             self.inverse_model = self.build_inverse_model().to(self.args.device)
             self.forward_model = self.build_forward_model().to(self.args.device)
 
@@ -262,6 +266,14 @@ class Agent(nn.Module):
         [self.states_sequence.append(processed) for _ in range(self.args.n_sequence)] # Fill with identical states/frames
 
         return self.encode_sequence()
+
+    def encode_state(self, state):
+            state_t = torch.FloatTensor(state).to(self.args.device)
+            state_t = torch.unsqueeze(state_t, 0)
+            state_t = self.encoder_model(state_t)
+            state_t = torch.squeeze(state_t, 0)
+            state = state_t.cpu().detach().numpy()
+            return state
 
     def encode_sequence(self):
         states_stack = np.stack(self.states_sequence)
@@ -374,6 +386,9 @@ class Agent(nn.Module):
         if self.args.has_normalized_state:
             next_state = self.normalize_state(next_state)
 
+        if self.args.has_curiosity and not self.args.has_images:
+            next_state = self.encode_state(next_state)
+
         if self.args.has_images:
             next_state = self.get_next_sequence(next_state, is_done)
 
@@ -396,7 +411,16 @@ class Agent(nn.Module):
 
     def reset_env(self):
         state = self.env.reset()
-        self.current_state = self.init_current_state(state) if self.args.has_images else state
+
+        if self.args.has_curiosity:
+            if self.args.has_images:
+                self.current_state = self.init_current_state(state)
+            else:
+                self.current_state = self.encode_state(state)
+        else:
+            self.current_state = state
+
+
         self.e_loss_dqn.clear()
         self.e_reward = 0
         if self.args.has_curiosity:
@@ -530,7 +554,7 @@ class Agent(nn.Module):
         done = np.stack(minibatch[:, 4])
 
         state_t = torch.FloatTensor(state).to(self.args.device)
-        next_state_t = torch.FloatTensor(np.array(next_state)).to(self.args.device)
+        next_state_t = torch.FloatTensor(next_state).to(self.args.device)
 
         # CURIOSITY
         if self.args.has_curiosity:
