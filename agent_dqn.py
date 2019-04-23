@@ -107,8 +107,8 @@ class AgentDQN(nn.Module):
 
 
     # OVERRIDABLE
-    def after_step(self, act_values, reward, next_state, done):
-        transition = [self.current_state, act_values, reward, next_state, done]
+    def after_step(self, act_values, reward, next_state, is_terminal):
+        transition = [self.current_state, act_values, reward, next_state, is_terminal]
         self.memory.add(transition)
 
         self.current_state = next_state
@@ -117,12 +117,12 @@ class AgentDQN(nn.Module):
     def play_step(self):
         action, act_values = self.act()
         next_state, reward, is_done, _ = self.env.step(action)
-        done = 0.0 if is_done else 1.0
+        is_terminal = 0.0 if is_done else 1.0
 
         if self.args.has_normalized_state:
             next_state = normalize_state(next_state)
     
-        self.after_step(act_values, reward, next_state, done) # OVERRIDE THIS
+        self.after_step(act_values, reward, next_state, is_terminal) # OVERRIDE THIS
         self.end_step(reward, next_state, is_done) 
         
         return is_done

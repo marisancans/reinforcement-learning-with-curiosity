@@ -130,10 +130,6 @@ class AgentCurious(AgentDQN):
             w *= s
 
         return h, w 
-
-    def normalize_state(self, x):
-        x = (x - self.state_min_val) / (self.state_max_val - self.state_min_val)
-        return x
     
     def init_current_state(self, state):
         processed = self.preproprocess_frame(state)
@@ -239,24 +235,11 @@ class AgentCurious(AgentDQN):
         cv2.imshow('activations', img)
         cv2.waitKey(1)
 
-       
-    def print_debug(self, i_episode, exec_time):
-        if self.args.debug:
-            dqn_loss = self.loss_dqn[-1]
-            ers = self.ers[-1]
-            info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.4f}   |    dqn:  {dqn_loss:.4f}   |   ers:  {ers:.2f}   |   time: {exec_time:.4f}"
-                
-            return info
-
     def print_debug(self, i_episode, exec_time):
         dqn_info = super(AgentCurious, self).print_debug(i_episode, exec_time)
         
         if self.args.debug:
-            loss_combined = self.loss_combined[-1]
-            loss_inverse = self.loss_inverse[-1] 
-            cos_distance = self.cos_distance[-1] 
-
-            info = f"   |   com: {loss_combined:.4f}    |    inv: {loss_inverse:.4f}   |   cos: {cos_distance:.4f}"
+            info = f"   |   com: {self.loss_combined[-1]:.4f}    |    inv: {self.loss_inverse[-1]:.4f}   |   cos: {self.cos_distance[-1]:.4f}"
 
             return dqn_info + info
 
@@ -356,13 +339,13 @@ class AgentCurious(AgentDQN):
         return action_idx, act_vector
 
 
-    def after_step(self, act_values, reward, next_state, done):
+    def after_step(self, act_values, reward, next_state, is_terminal):
         if self.args.has_images:
-            next_state = self.get_next_sequence(next_state, is_done)
+            next_state = self.get_next_sequence(next_state, not is_terminal)
         else:
             next_state = self.encode_state(next_state) # TODO - This encodes each state, its slow
 
-        transition = [self.current_state, act_values, reward, next_state, done]
+        transition = [self.current_state, act_values, reward, next_state, is_terminal]
         self.memory.add(transition)   
 
         self.current_state = next_state
@@ -378,8 +361,7 @@ class AgentCurious(AgentDQN):
         self.loss_combined.append(com_avg)
 
     def remember_episode(self, loss_dqn, loss_cos, loss_inv, loss):
-        loss_dqn_avg = average(loss_dqn)
-        super(AgentCurious, self).remember_episode(loss_dqn_avg)
+        super(AgentCurious, self).remember_episode(loss_dqn)
 
         loss_cos_avg = average(loss_cos)
         self.e_loss_inverse.append(float(loss_inv))

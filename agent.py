@@ -387,7 +387,7 @@ class Agent(nn.Module):
     def play_step(self):
         action, act_values = self.act()
         next_state, reward, is_done, _ = self.env.step(action)
-        done = 0.0 if is_done else 1.0
+        is_terminal = 0.0 if is_done else 1.0
 
         if self.args.has_normalized_state:
             next_state = self.normalize_state(next_state)
@@ -401,7 +401,7 @@ class Agent(nn.Module):
         current_state = self.current_state.detach()
         next_state = next_state.detach()
 
-        transition = [self.current_state, act_values, reward, next_state, done]
+        transition = [self.current_state, act_values, reward, next_state, is_terminal]
         
         if self.args.has_prioritized:
             self.memory.add(error=10000, transition=transition) # because its initially unknown and has to be high priority
