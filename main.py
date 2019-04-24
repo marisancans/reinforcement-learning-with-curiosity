@@ -2,7 +2,7 @@
 import logging
 
 from visualdl import LogWriter # Has to be imported before everython elese, otherwise dumps
-import Box2D, os, shutil, datetime, time, random, sys, torch, argparse, gym, pandas
+import Box2D, os, shutil, datetime, time, random, sys, torch, argparse, gym, pandas, copy
 from gym import envs
 import numpy as np
 import multiprocessing
@@ -10,7 +10,6 @@ from sklearn.model_selection import ParameterGrid
 from multiprocessing import Pool, Process, Lock
 import pandas as pd
 
-from agent import Agent
 from agent_dqn import AgentDQN
 from agent_curious import AgentCurious
 
@@ -33,7 +32,7 @@ parser.add_argument('-debug_activations', type=str, nargs='+', help='Show activa
 parser.add_argument('-save_interval', default=100, type=int, help='Save model after n steps')
 
 parser.add_argument('-env_name', required=True, help='OpenAI game enviroment name')
-parser.add_argument('-learning_rate', default=0.001, type=float)
+parser.add_argument('-learning_rate', default=0.0001, type=float)
 parser.add_argument('-batch_size', default=32, type=int)
 
 parser.add_argument('-has_normalized_state', default=False, type=arg_to_bool, help='Normalize state vector in forward and inverse models? true | false')
@@ -67,12 +66,9 @@ parser.add_argument('-encoder_layer_out', default=15, type=int,)
 
 parser.add_argument('-inverse_1_layer_out', default=30, type=int,)
 parser.add_argument('-inverse_2_layer_out', default=25, type=int,)
-parser.add_argument('-inverse_3_layer_out', default=20, type=int,)
-parser.add_argument('-inverse_4_layer_out', default=10, type=int,)
 
 parser.add_argument('-forward_1_layer_out', default=30, type=int)
 parser.add_argument('-forward_2_layer_out', default=20, type=int)
-parser.add_argument('-forward_3_layer_out', default=20, type=int)
 
 parser.add_argument('-dqn_1_layer_out', default=15, type=int,)
 parser.add_argument('-dqn_2_layer_out', default=15, type=int,)
@@ -155,29 +151,26 @@ def log_evaluate_agent(ers_avg, folder_name):
     logW = get_cleaned_logger(folder_name)
 
 
-def log_comparison_agents(all_ers, names, folder_name):
+def log_comparison_agents(all_ers, folder_name):
     logW = get_cleaned_logger(folder_name)
     data = {}
 
-    for a_idx in range(len(names)):
-        agent_runs = []
+    for agent_name, ers in all_ers.items():
+        ers = np.array(ers)
+    
+        ers_avg = np.sum(ers, axis=0) / args.parralel_runs
+        ers_min = np.min(ers, axis=0)
+        ers_max = np.max(ers, axis=0)
 
-        for run in range(args.parralel_runs):
-            agent_runs.append(all_ers[run][a_idx])
-
-        ers_avg = np.sum(agent_runs, axis=0) / args.parralel_runs
-        ers_min = np.min(agent_runs, axis=0)
-        ers_max = np.max(agent_runs, axis=0)
-
-        with logW.mode(names[a_idx]):
+        with logW.mode(agent_name):
             l = logW.scalar('ers_' + args.env_name)
 
         for t, x in enumerate(ers_avg):
             l.add_record(t, x)
         
-        data[names[a_idx] + "_ers"] = ers_avg
-        data[names[a_idx] + "_min"] = ers_min
-        data[names[a_idx] + "_max"] = ers_max
+        data[agent_name + "_ers"] = ers_avg
+        data[agent_name + "_min"] = ers_min
+        data[agent_name + "_max"] = ers_max
 
     file_name = "ers_data.csv"
     ex = logdir + folder_name + "/" + file_name
@@ -214,30 +207,34 @@ def save_model(agent, run, i_episode, folder_name):
 # This mode compares n agents
 # ==== MODE 0 ======
 def comparison():
-    # -------------------- Write all agents to test in here ----------------
-    names = ['curious', 'curious_ddqn', 'dqn', 'ddqn']
+    # Args are passed as references, so deep copy is requred
+    agents = {}
 
     args.has_curiosity = False
+    args.has_ddqn = False
+    
+    ddqn_args = copy.deepcopy(args)
+    ddqn_args.has_ddqn = True
 
-    curious_args = args
+    curious_args = copy.deepcopy(args)
     curious_args.has_curiosity = True
-
-    curious_ddqn_args = args
+    
+    curious_ddqn_args = copy.deepcopy(args)
     curious_ddqn_args.has_curiosity = True
     curious_ddqn_args.has_ddqn = True
 
-    ddqn_args = args
-    ddqn_args.has_ddqn = True
-
-    all_args = [curious_args, curious_ddqn_args, args, ddqn_args]
-
-    # -----------------------------------------------------------------------
-    all_ers = np.zeros(shape=(args.parralel_runs, len(names), args.n_episodes))
+    all_ers = {}
    
     for run in range(args.parralel_runs):
-        agents = [Agent(agent_args, name=n) for agent_args, n in zip(all_args, names)]
+        agents['dqn'] = AgentDQN(args, name='dqn')
+        agents['ddqn'] = AgentDQN(ddqn_args, name='ddqn')
+        agents['curious'] = AgentCurious(curious_args, name='curious')
+        agents['curious_ddqn'] = AgentCurious(curious_ddqn_args, name='curious_ddqn')
 
-        for a_idx, a in enumerate(agents):
+        for n in agents:
+            all_ers[n] = np.zeros(shape=(args.parralel_runs, args.n_episodes)) 
+
+        for n, a in agents.items():
             for i_episode in range(args.n_episodes):
                 a.reset_env()
                 is_done = False
@@ -245,9 +242,7 @@ def comparison():
                 while not is_done:
                     is_done = a.play_step()
                 
-                all_ers[run][a_idx][i_episode] = np.array(a.ers[-1])
-                if i_episode % 10 == 0:
-                    print(i_episode, a.ers[-1])
+                all_ers[n][run][i_episode] = np.array(a.ers[-1])
             
             print('run', run, a.name)
         print('Run', run, ' finished')
@@ -255,7 +250,7 @@ def comparison():
         # End of i_episodes
     # End of runs
 
-    log_comparison_agents(all_ers, names, folder_name='comp')
+    log_comparison_agents(all_ers, folder_name='comp')
 
 
 
@@ -328,7 +323,7 @@ def parralel_evaluate(params):
     for run in range(args.parralel_runs):
         start_run = time.time()
 
-        agent = Agent(grid_args, name='curious')
+        agent = AgentCurious(grid_args, name='curious')
 
         for i_episode in range(args.n_episodes):
             agent.reset_env()
@@ -364,7 +359,7 @@ def parralel_evaluate(params):
 def multiprocess():
     curiosity_beta = np.round(np.arange(0, 1.1, 0.1), 1)
     curiosity_lambda = np.round(np.arange(0, 1.1, 0.1), 1)
-    batch_size = [32]#, 64, 128, 256]
+    batch_size = [128]#, 64, 128, 256]
     param_grid = {'curiosity_beta': curiosity_beta, 'curiosity_lambda': curiosity_lambda, 'batch_size': batch_size}
     p = ParameterGrid(param_grid)
     p = list(p)

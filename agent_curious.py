@@ -25,6 +25,8 @@ class AgentCurious(AgentDQN):
             h, w = self.calc_image_dims()
             self.n_states = int(h * w * self.args.n_sequence)
             self.states_sequence = deque(maxlen=self.args.n_sequence)
+            self.explore_probability = 0 # Decaying epsilon, not linear
+            
 
         # --------- MODELS --------------
         if self.args.has_images:
@@ -75,13 +77,7 @@ class AgentCurious(AgentDQN):
         return torch.nn.Sequential(
             nn.Linear(in_features=in_features, out_features=self.args.dqn_1_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.args.dqn_2_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.dqn_2_layer_out, out_features=self.args.dqn_3_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.dqn_3_layer_out, out_features=self.args.dqn_4_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.dqn_4_layer_out, out_features=self.n_actions),
+            nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.n_actions),
         )
 
     def build_inverse_model(self):
@@ -91,13 +87,7 @@ class AgentCurious(AgentDQN):
         return torch.nn.Sequential(
             nn.Linear(in_features=in_features * s, out_features=self.args.inverse_1_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=self.args.inverse_1_layer_out, out_features=self.args.inverse_2_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.inverse_2_layer_out, out_features=self.args.inverse_3_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.inverse_3_layer_out, out_features=self.args.inverse_4_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.inverse_4_layer_out, out_features=self.n_actions)
+            nn.Linear(in_features=self.args.inverse_1_layer_out, out_features=self.n_actions),
         )
 
     def build_forward_model(self):
@@ -106,11 +96,7 @@ class AgentCurious(AgentDQN):
         return torch.nn.Sequential(
             nn.Linear(in_features=encoder_out + self.n_actions, out_features=self.args.forward_1_layer_out), # input actions are one hot encoded
             nn.ReLU(),
-            nn.Linear(in_features=self.args.forward_1_layer_out, out_features=self.args.forward_2_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.forward_2_layer_out, out_features=self.args.forward_3_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.forward_3_layer_out, out_features=encoder_out)
+            nn.Linear(in_features=self.args.forward_1_layer_out, out_features=encoder_out)
         )
 
     # calcualte image dimensions to allow dynamc image resizes
@@ -239,7 +225,7 @@ class AgentCurious(AgentDQN):
         dqn_info = super(AgentCurious, self).print_debug(i_episode, exec_time)
         
         if self.args.debug:
-            info = f"   |   com: {self.loss_combined[-1]:.4f}    |    inv: {self.loss_inverse[-1]:.4f}   |   cos: {self.cos_distance[-1]:.4f}"
+            info = f"   |   E-decay: {self.explore_probability:.2f}   |   mem: {self.memory.get_entries()}   |   com: {self.loss_combined[-1]:.4f}    |    inv: {self.loss_inverse[-1]:.4f}   |   cos: {self.cos_distance[-1]:.4f}"
 
             return dqn_info + info
 
@@ -293,43 +279,25 @@ class AgentCurious(AgentDQN):
             self.current_state = self.encode_state(state)
 
 
-    def update_target(self):
-            self.target_model.load_state_dict(self.dqn_model.state_dict())
-
     def update_priority(self, td_errors, idxs):
         # update priority
         for i in range(self.args.batch_size):
             idx = idxs[i]
             self.memory.update(idx, td_errors[i]) 
-        
-    def update_target(self):
-        if self.args.has_ddqn:
-            if self.total_steps % self.args.target_update == 0:
-                self.target_model.load_state_dict(self.dqn_model.state_dict())
-
-    def sample_batch(self):
-        buffer_size = len(self.memory)
-        index = np.random.choice(np.arange(buffer_size),
-                                size = self.args.batch_size,
-                                replace = False)
-        
-        return np.array([self.memory[i] for i in index])
 
     def act(self):
+        explore_probability = self.args.epsilon_floor + (self.epsilon_start - self.args.epsilon_floor) * np.exp(-self.args.epsilon_decay * self.current_step)
+        self.explore_probability = explore_probability
+
         # Pick random action ( Exploration )
-        if random.random() <= self.epsilon:
+        if random.random() <= explore_probability:
             action_idx = random.randint(0, self.n_actions - 1)
             act_vector = np.zeros(self.n_actions,) # 1D vect of size 2
             act_vector[action_idx] = 1.0
             return action_idx, act_vector
 
         # Exploitation
-        state_t = self.current_state
-
-        if self.args.has_images:
-            state_t = state_t.view(-1)
-
-        act_values = self.dqn_model(state_t)  # Predict action based on state
+        act_values = self.dqn_model(self.current_state)  # Predict action based on state
         act_values = act_values.cpu().detach().numpy()
 
         action_idx = np.argmax(act_values)
@@ -341,7 +309,10 @@ class AgentCurious(AgentDQN):
 
     def after_step(self, act_values, reward, next_state, is_terminal):
         if self.args.has_images:
-            next_state = self.get_next_sequence(next_state, not is_terminal)
+            if self.current_step % self.args.n_frame_skip == 0: # Frame skipping, only every n-th frame is taken
+                next_state = self.get_next_sequence(next_state, not is_terminal)
+            else: 
+                return 
         else:
             next_state = self.encode_state(next_state) # TODO - This encodes each state, its slow
 
@@ -361,9 +332,12 @@ class AgentCurious(AgentDQN):
         self.loss_combined.append(com_avg)
 
     def remember_episode(self, loss_dqn, loss_cos, loss_inv, loss):
+        #if self.args.has_images:
+        loss_dqn = loss_dqn.detach().mean()
+            
         super(AgentCurious, self).remember_episode(loss_dqn)
 
-        loss_cos_avg = average(loss_cos)
+        loss_cos_avg = average(loss_cos.detach())
         self.e_loss_inverse.append(float(loss_inv))
         self.e_cos_distance.append(float(loss_cos_avg))
         self.e_loss_combined.append(float(loss))

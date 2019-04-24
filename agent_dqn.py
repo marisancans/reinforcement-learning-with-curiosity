@@ -36,13 +36,13 @@ class AgentDQN(nn.Module):
         self.state_min_val = self.env.observation_space.high.max()
         self.n_actions = self.env.action_space.n
         self.epsilon = 1.0
+        self.epsilon_start = 1.0
 
         # --------- MODELS --------------
         self.dqn_model = self.build_dqn_model().to(self.args.device)
         self.dqn_model = init_parameters('dqn', self.dqn_model)
 
         self.target_model = self.build_dqn_model().to(self.args.device)
-        self.update_target()
 
         self.dqn_model_loss_fn = nn.MSELoss()
         self.optimizer = torch.optim.Adam(params=self.dqn_model.parameters(), lr = self.args.learning_rate)
@@ -60,6 +60,8 @@ class AgentDQN(nn.Module):
         # ----- EPISODE BUFFER  --------
         self.e_loss_dqn = []
         self.e_reward = 0
+
+        self.update_target()
 
     def check_base_args(self, args):
         if args.batch_size < 4:
