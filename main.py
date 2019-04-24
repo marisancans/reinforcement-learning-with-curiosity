@@ -117,7 +117,7 @@ FileUtils.createDir(run_path)
 logging_utils = LoggingUtils(filename=os.path.join(run_path, 'log.txt'))
 is_logged_cnorm = False
 
-#ArgsUtils.log_args(args, 'main.py', logging_utils)
+ArgsUtils.log_args(args, 'main.py', logging_utils)
 
 CsvUtils.create_local(args)
 
@@ -224,15 +224,15 @@ def comparison():
     curious_ddqn_args.has_ddqn = True
 
     all_ers = {}
+
+    for n in ['dqn', 'ddqn', 'curious', 'curious_ddqn']:
+        all_ers[n] = np.zeros(shape=(args.parralel_runs, args.n_episodes)) 
    
     for run in range(args.parralel_runs):
         agents['dqn'] = AgentDQN(args, name='dqn')
         agents['ddqn'] = AgentDQN(ddqn_args, name='ddqn')
         agents['curious'] = AgentCurious(curious_args, name='curious')
         agents['curious_ddqn'] = AgentCurious(curious_ddqn_args, name='curious_ddqn')
-
-        for n in agents:
-            all_ers[n] = np.zeros(shape=(args.parralel_runs, args.n_episodes)) 
 
         for n, a in agents.items():
             for i_episode in range(args.n_episodes):
@@ -264,7 +264,7 @@ def evaluate():
    
     for run in range(args.parralel_runs):
         start_run = time.time()
-        agent = AgentCurious(args, name='curious')
+        agent = AgentDQN(args, name='curious')
         
         with logW.mode('run: ' + str(run)):
             l = logW.scalar('ers')

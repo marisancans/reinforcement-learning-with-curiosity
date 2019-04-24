@@ -25,8 +25,7 @@ class AgentCurious(AgentDQN):
             h, w = self.calc_image_dims()
             self.n_states = int(h * w * self.args.n_sequence)
             self.states_sequence = deque(maxlen=self.args.n_sequence)
-            self.explore_probability = 0 # Decaying epsilon, not linear
-            
+                      
 
         # --------- MODELS --------------
         if self.args.has_images:
@@ -225,7 +224,7 @@ class AgentCurious(AgentDQN):
         dqn_info = super(AgentCurious, self).print_debug(i_episode, exec_time)
         
         if self.args.debug:
-            info = f"   |   E-decay: {self.explore_probability:.2f}   |   mem: {self.memory.get_entries()}   |   com: {self.loss_combined[-1]:.4f}    |    inv: {self.loss_inverse[-1]:.4f}   |   cos: {self.cos_distance[-1]:.4f}"
+            info = f"   |   n_steps: {self.total_steps}   |   mem: {self.memory.get_entries()}   |   com: {self.loss_combined[-1]:.4f}    |    inv: {self.loss_inverse[-1]:.4f}   |   cos: {self.cos_distance[-1]:.4f}"
 
             return dqn_info + info
 
@@ -286,11 +285,8 @@ class AgentCurious(AgentDQN):
             self.memory.update(idx, td_errors[i]) 
 
     def act(self):
-        explore_probability = self.args.epsilon_floor + (self.epsilon_start - self.args.epsilon_floor) * np.exp(-self.args.epsilon_decay * self.current_step)
-        self.explore_probability = explore_probability
-
         # Pick random action ( Exploration )
-        if random.random() <= explore_probability:
+        if random.random() <= self.get_epsilon():
             action_idx = random.randint(0, self.n_actions - 1)
             act_vector = np.zeros(self.n_actions,) # 1D vect of size 2
             act_vector[action_idx] = 1.0

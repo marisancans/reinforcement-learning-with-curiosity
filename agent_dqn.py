@@ -82,19 +82,15 @@ class AgentDQN(nn.Module):
 
     # OVERRIDABLE
     def build_dqn_model(self):
-        if self.args.has_curiosity:
-            in_features = self.args.encoder_last_layer_out
-        else:
-            in_features = self.n_states
-
         return torch.nn.Sequential(
-            nn.Linear(in_features=in_features, out_features=self.args.dqn_1_layer_out),
+            nn.Linear(in_features=self.n_states, out_features=self.args.dqn_1_layer_out),
             nn.ReLU(),
-            nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.args.dqn_2_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.dqn_2_layer_out, out_features=self.n_actions),
+            nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.n_actions),
         )
 
+    def get_epsilon():
+        self.epsilon = self.args.epsilon_floor + (self.epsilon_start - self.args.epsilon_floor) * np.exp(-self.args.epsilon_decay * self.current_step)
+        
 
     def end_step(self, reward, next_state, is_done):
         self.e_reward += reward
