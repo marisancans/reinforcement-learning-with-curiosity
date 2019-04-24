@@ -8,7 +8,7 @@ import logging
 def to_numpy(tensor_data):
     return tensor_data.detach().to('cpu').data.numpy()
 
-def init_parameters(model):
+def init_parameters(model_name, model):
     total_param_size = 0
     for name, param in model.named_parameters():
         each_param_size = np.prod(param.size())
@@ -33,7 +33,8 @@ def init_parameters(model):
                 else:
                     torch.nn.init.uniform_(param)
 
-    logging.info(f'total_param_size: {total_param_size}')
+    logging.info(f'model: {model_name}  |  total_param_size: {total_param_size}')
+    return model
 
 
 def normalize_output(output_emb, embedding_norm):
@@ -43,3 +44,6 @@ def normalize_output(output_emb, embedding_norm):
     else: # none
         output_norm = output_emb
     return output_norm
+
+
+
