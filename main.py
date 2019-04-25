@@ -32,20 +32,20 @@ parser.add_argument('-debug_activations', type=str, nargs='+', help='Show activa
 parser.add_argument('-save_interval', default=100, type=int, help='Save model after n steps')
 
 parser.add_argument('-env_name', required=True, help='OpenAI game enviroment name')
-parser.add_argument('-learning_rate', default=0.0001, type=float)
+parser.add_argument('-learning_rate', default=0.001, type=float)
 parser.add_argument('-batch_size', default=32, type=int)
 
-parser.add_argument('-has_normalized_state', default=False, type=arg_to_bool, help='Normalize state vector in forward and inverse models? true | false')
+parser.add_argument('-is_normalized_state', default=False, type=arg_to_bool, help='Normalize state vector in forward and inverse models? true | false')
 parser.add_argument('-epsilon_decay', required=True, type=float, help='Epslion decay for exploration / explotation policy')
 parser.add_argument('-epsilon_floor', default=0.01, type=float, help='Where epsilon stops to decay')
 parser.add_argument('-gamma', default=0.95, type=float, help='Hyperparameter for DQN')
 parser.add_argument('-n_episodes', default=50, type=int, help='Number of episodes (games) to be played')
 parser.add_argument('-n_frames', default=9999, type=int, help='Number of frames per one episode')
 
-parser.add_argument('-has_prioritized', default=True, type=arg_to_bool, help='Is priositized experience replay beeing used?')
+parser.add_argument('-is_prioritized', default=True, type=arg_to_bool, help='Is priositized experience replay beeing used?')
 parser.add_argument('-memory_size', default=10000, type=int, help="Replay memory size (This code uses sum tree, not deque)")
 
-parser.add_argument('-has_images', default=False, type=arg_to_bool, help='Whether or not the game state is an image')
+parser.add_argument('-is_images', default=False, type=arg_to_bool, help='Whether or not the game state is an image')
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
 parser.add_argument('-n_sequence', default=4, type=int, help='How many frames/channels will be passed in encoder')
 parser.add_argument('-n_frame_skip', default=4, type=int, help='How many frames to skip, before pushing to frame stack')
@@ -54,7 +54,7 @@ parser.add_argument('-image_crop', type=int, nargs='+', help='Coordinates to cro
 parser.add_argument('-parralel_runs', default=5, type=int, help="How many parralel agents to simulate")
 parser.add_argument('-n_processes', default=3, type=int, help="How many parralel processes to run (MODE 3)")
 
-parser.add_argument('-has_curiosity', default=False, type=arg_to_bool, required=True)
+parser.add_argument('-is_curiosity', default=False, type=arg_to_bool, required=True)
 parser.add_argument('-curiosity_beta', default=-1.0, type=float, help='Beta hyperparameter for curiosity module')
 parser.add_argument('-curiosity_lambda', default=-1.0, type=float, help='Lambda hyperparameter for curiosity module')
 parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
@@ -75,7 +75,7 @@ parser.add_argument('-dqn_2_layer_out', default=15, type=int,)
 parser.add_argument('-dqn_3_layer_out', default=10, type=int,)
 parser.add_argument('-dqn_4_layer_out', default=10, type=int,)
 
-parser.add_argument('-has_ddqn', type=arg_to_bool, default=False, help='Is double DQN enabled?')
+parser.add_argument('-is_ddqn', type=arg_to_bool, default=False, help='Is double DQN enabled?')
 parser.add_argument('-target_update', default=10, type=int, help='Update target network after n steps')
 
 parser.add_argument('-id', default=0, type=int)
@@ -89,11 +89,19 @@ args, args_other = parser.parse_known_args()
 logdir = "./logs/"
 save_dir = "save"
 
-#TODO add necessary performance parameters
 tmp = [
-    'score', # add extra params that you are interested in
+    'episode',
+    'run',
+    'e_score', # add extra params that you are interested in
+    'e_score_min',
+    'e_score_max',
+    'score_avg',
+    'score_best',
     'loss',
-    'loss_dqn'
+    'loss_dqn',
+    'loss_inverse',
+    'loss_forward', 
+    'cosine_distance'
 ]
 if not args.params_report is None:
     for it in reversed(args.params_report):
@@ -158,19 +166,17 @@ def log_comparison_agents(all_ers, folder_name):
     for agent_name, ers in all_ers.items():
         ers = np.array(ers)
     
-        ers_avg = np.sum(ers, axis=0) / args.parralel_runs
-        ers_min = np.min(ers, axis=0)
-        ers_max = np.max(ers, axis=0)
+        score_avg = np.sum(ers, axis=0) / args.parralel_runs
+        score_std = np.std(ers, axis=0)
 
         with logW.mode(agent_name):
-            l = logW.scalar('ers_' + args.env_name)
+            l = logW.scalar('avg_score_' + args.env_name)
 
-        for t, x in enumerate(ers_avg):
+        for t, x in enumerate(score_avg):
             l.add_record(t, x)
         
-        data[agent_name + "_ers"] = ers_avg
-        data[agent_name + "_min"] = ers_min
-        data[agent_name + "_max"] = ers_max
+        data[agent_name + "_avg_score"] = score_avg
+        data[agent_name + "_std"] = score_std
 
     file_name = "ers_data.csv"
     ex = logdir + folder_name + "/" + file_name
@@ -186,7 +192,7 @@ def save_model(agent, run, i_episode, folder_name):
         models = {}
         models['dqn'] = agent.dqn_model
 
-        if agent.args.has_curiosity:
+        if agent.args.is_curiosity:
             models['inverse'] = agent.inverse_model
             models['forward'] = agent.forward_model
             models['encoder'] = agent.encoder_model
@@ -210,18 +216,18 @@ def comparison():
     # Args are passed as references, so deep copy is requred
     agents = {}
 
-    args.has_curiosity = False
-    args.has_ddqn = False
+    args.is_curiosity = False
+    args.is_ddqn = False
     
     ddqn_args = copy.deepcopy(args)
-    ddqn_args.has_ddqn = True
+    ddqn_args.is_ddqn = True
 
     curious_args = copy.deepcopy(args)
-    curious_args.has_curiosity = True
+    curious_args.is_curiosity = True
     
     curious_ddqn_args = copy.deepcopy(args)
-    curious_ddqn_args.has_curiosity = True
-    curious_ddqn_args.has_ddqn = True
+    curious_ddqn_args.is_curiosity = True
+    curious_ddqn_args.is_ddqn = True
 
     all_ers = {}
 
@@ -242,7 +248,7 @@ def comparison():
                 while not is_done:
                     is_done = a.play_step()
                 
-                all_ers[n][run][i_episode] = np.array(a.ers[-1])
+                all_ers[n][run][i_episode] = np.array(sum(a.e_reward))
             
             print('run', run, a.name)
         print('Run', run, ' finished')
@@ -260,15 +266,12 @@ def evaluate():
     save_folder = datetime.datetime.now().strftime("%b-%d-%H:%M")
     all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
 
-    logW = get_cleaned_logger(folder_name='eval')
+    # logW = get_cleaned_logger(folder_name='eval')
    
     for run in range(args.parralel_runs):
         start_run = time.time()
-        agent = AgentDQN(args, name='curious')
+        agent = AgentCurious(args, name='curious')
         
-        with logW.mode('run: ' + str(run)):
-            l = logW.scalar('ers')
-
         for i_episode in range(args.n_episodes):
             start = time.time()
             agent.reset_env()
@@ -278,33 +281,24 @@ def evaluate():
                 is_done = agent.play_step()
                 
                              
-            all_ers[run][i_episode] = agent.ers[-1]
+            all_ers[run][i_episode] = sum(agent.e_reward)
             t = time.time() - start
-            print(agent.print_debug(i_episode, exec_time=t))
 
-            l.add_record(i_episode, agent.ers[-1])
-
-            if i_episode % 100 == 0: # every 100th episode
+            if i_episode % 1 == 0 and i_episode > 10: # every 100th episode
                 #TODO populate state (pass to agent)
-                state = {
-                    'score': 777, # key - value pairs that match params_report
-                    'best_score': 888
-                }
+                state = agent.get_results()
+                state['run'] = run
+
                 CsvUtils.add_results_local(args, state)
-                CsvUtils.add_results(args, state)
 
-            save_model(agent, run, i_episode, folder_name=save_folder)
+            # save_model(agent, run, i_episode, folder_name=save_folder)
+            if args.debug:
+                logging.info(agent.print_debug(i_episode, t))
 
-        print('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
+        state = agent.get_results()
+        CsvUtils.add_results(args, state)
+        logging.info('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
 
-    with logW.mode('avg_runs: '):
-        l = logW.scalar('ers')
-
-    all_ers = np.array(all_ers)
-    ers_avg = np.sum(all_ers, axis=0) / args.parralel_runs
-
-    for t, x in enumerate(ers_avg):
-        l.add_record(t, x)
 
 def init_child(lock_):
     global lock
@@ -359,7 +353,7 @@ def parralel_evaluate(params):
 def multiprocess():
     curiosity_beta = np.round(np.arange(0, 1.1, 0.1), 1)
     curiosity_lambda = np.round(np.arange(0, 1.1, 0.1), 1)
-    batch_size = [128]#, 64, 128, 256]
+    batch_size = [32]#, 64, 128, 256]
     param_grid = {'curiosity_beta': curiosity_beta, 'curiosity_lambda': curiosity_lambda, 'batch_size': batch_size}
     p = ParameterGrid(param_grid)
     p = list(p)

@@ -21,14 +21,14 @@ class AgentCurious(AgentDQN):
         super().__init__(args, name)
 
         # --------- ENV STATE --------------- 
-        if self.args.has_images:
+        if self.args.is_images:
             h, w = self.calc_image_dims()
             self.n_states = int(h * w * self.args.n_sequence)
             self.states_sequence = deque(maxlen=self.args.n_sequence)
                       
 
         # --------- MODELS --------------
-        if self.args.has_images:
+        if self.args.is_images:
             self.encoder_model = EncoderModule(self.args, self.n_states).to(self.args.device)
         else:
             self.encoder_model = SimpleEncoderModule(self.args, self.n_states).to(self.args.device)
@@ -57,11 +57,11 @@ class AgentCurious(AgentDQN):
         self.e_loss_combined = []
 
     def check_args(self, args):
-        if not args.has_curiosity:
+        if not args.is_curiosity:
             print("Curiosity has to be enabled, if you want to use plain DQN, use AgentDQN class")
             os._exit(0)
 
-        if args.has_curiosity:
+        if args.is_curiosity:
             if args.curiosity_beta == -1 or args.curiosity_lambda == -1:
                 print("Curiosity enabled but lambda or beta value hasnt been set!")
                 os._exit(1)
@@ -71,7 +71,7 @@ class AgentCurious(AgentDQN):
             os._exit(0)
 
     def build_dqn_model(self):
-        in_features = self.args.encoder_layer_out if self.args.has_images else self.args.simple_encoder_2_layer_out
+        in_features = self.args.encoder_layer_out if self.args.is_images else self.args.simple_encoder_2_layer_out
 
         return torch.nn.Sequential(
             nn.Linear(in_features=in_features, out_features=self.args.dqn_1_layer_out),
@@ -81,7 +81,7 @@ class AgentCurious(AgentDQN):
 
     def build_inverse_model(self):
         s = 2 # multiply by 2 because we have 2 concated vectors
-        in_features = self.args.encoder_layer_out if self.args.has_images else self.args.simple_encoder_2_layer_out
+        in_features = self.args.encoder_layer_out if self.args.is_images else self.args.simple_encoder_2_layer_out
 
         return torch.nn.Sequential(
             nn.Linear(in_features=in_features * s, out_features=self.args.inverse_1_layer_out),
@@ -90,7 +90,7 @@ class AgentCurious(AgentDQN):
         )
 
     def build_forward_model(self):
-        encoder_out = self.args.encoder_layer_out if self.args.has_images else self.args.simple_encoder_2_layer_out
+        encoder_out = self.args.encoder_layer_out if self.args.is_images else self.args.simple_encoder_2_layer_out
 
         return torch.nn.Sequential(
             nn.Linear(in_features=encoder_out + self.n_actions, out_features=self.args.forward_1_layer_out), # input actions are one hot encoded
@@ -228,6 +228,14 @@ class AgentCurious(AgentDQN):
 
             return dqn_info + info
 
+    def get_results(self):
+        d = super(AgentCurious, self).get_results()
+        
+        d['loss_inverse'] = self.loss_inverse[-1]
+        d['loss_forward'] = self.loss_inverse[-1]
+        d['cosine_distance'] = self.cos_distance[-1]
+
+        return d
 
     def get_inverse_and_forward_loss(self, state_t, next_state_t, recorded_action):
         # --------------- INVERSE MODEL -----------------------
@@ -272,7 +280,7 @@ class AgentCurious(AgentDQN):
         self.e_loss_combined.clear()
         self.e_cos_distance.clear()
 
-        if self.args.has_images:
+        if self.args.is_images:
             self.current_state = self.init_current_state(state)
         else:
             self.current_state = self.encode_state(state)
@@ -286,7 +294,7 @@ class AgentCurious(AgentDQN):
 
     def act(self):
         # Pick random action ( Exploration )
-        if random.random() <= self.get_epsilon():
+        if random.random() <= self.epsilon:
             action_idx = random.randint(0, self.n_actions - 1)
             act_vector = np.zeros(self.n_actions,) # 1D vect of size 2
             act_vector[action_idx] = 1.0
@@ -304,7 +312,7 @@ class AgentCurious(AgentDQN):
 
 
     def after_step(self, act_values, reward, next_state, is_terminal):
-        if self.args.has_images:
+        if self.args.is_images:
             if self.current_step % self.args.n_frame_skip == 0: # Frame skipping, only every n-th frame is taken
                 next_state = self.get_next_sequence(next_state, not is_terminal)
             else: 
@@ -333,7 +341,7 @@ class AgentCurious(AgentDQN):
             
         super(AgentCurious, self).remember_episode(loss_dqn)
 
-        loss_cos_avg = average(loss_cos.detach())
+        loss_cos_avg = average(to_numpy(loss_cos))
         self.e_loss_inverse.append(float(loss_inv))
         self.e_cos_distance.append(float(loss_cos_avg))
         self.e_loss_combined.append(float(loss))

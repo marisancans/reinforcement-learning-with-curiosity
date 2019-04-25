@@ -49,7 +49,6 @@ class Hook():
 class EncoderModule(nn.Module):
     def __init__(self, args, n_states):
         super(EncoderModule, self).__init__()
-        self.has_images = args.has_images
         self.args = args
         self.n_state = n_states
 

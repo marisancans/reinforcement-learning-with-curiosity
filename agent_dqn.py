@@ -36,7 +36,6 @@ class AgentDQN(nn.Module):
         self.state_min_val = self.env.observation_space.high.max()
         self.n_actions = self.env.action_space.n
         self.epsilon = 1.0
-        self.epsilon_start = 1.0
 
         # --------- MODELS --------------
         self.dqn_model = self.build_dqn_model().to(self.args.device)
@@ -51,15 +50,15 @@ class AgentDQN(nn.Module):
         self.current_episode = 0
         self.total_steps = 0 # in all episodes combined
         self.current_step = 0 # only in current episode
-        self.memory = Memory(capacity=self.args.memory_size, is_per=self.args.has_prioritized)
+        self.memory = Memory(capacity=self.args.memory_size, is_per=self.args.is_prioritized)
 
         # ----- TRAINING BUFFER --------
-        self.loss_dqn = [0]
-        self.ers = [0]
+        self.loss_dqn = []
+        self.ers = []
         
         # ----- EPISODE BUFFER  --------
         self.e_loss_dqn = []
-        self.e_reward = 0
+        self.e_reward = []
 
         self.update_target()
 
@@ -74,10 +73,10 @@ class AgentDQN(nn.Module):
     def check_args(self, args):
         def wrong_agent(cause): print(f"This agent doesnt have {cause}! Use class AgentCurious"); os._exit(0) 
 
-        if args.has_curiosity:
+        if args.is_curiosity:
             wrong_agent('curiosity')            
         
-        if args.has_images:
+        if args.is_images:
             wrong_agent('state as image support')
 
     # OVERRIDABLE
@@ -88,12 +87,8 @@ class AgentDQN(nn.Module):
             nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.n_actions),
         )
 
-    def get_epsilon():
-        self.epsilon = self.args.epsilon_floor + (self.epsilon_start - self.args.epsilon_floor) * np.exp(-self.args.epsilon_decay * self.current_step)
-        
-
     def end_step(self, reward, next_state, is_done):
-        self.e_reward += reward
+        self.e_reward.append(reward)
         self.update_target()
 
         # Pre populate memory before replay
@@ -117,7 +112,7 @@ class AgentDQN(nn.Module):
         next_state, reward, is_done, _ = self.env.step(action)
         is_terminal = 0.0 if is_done else 1.0
 
-        if self.args.has_normalized_state:
+        if self.args.is_normalized_state:
             next_state = normalize_state(next_state)
     
         self.after_step(act_values, reward, next_state, is_terminal) # OVERRIDE THIS
@@ -130,7 +125,7 @@ class AgentDQN(nn.Module):
         state = self.env.reset()
         self.current_state = state
         self.e_loss_dqn.clear()
-        self.e_reward = 0
+        self.e_reward .clear()
         return state
 
 
@@ -160,7 +155,7 @@ class AgentDQN(nn.Module):
         next_state_Q_val = self.dqn_model(next_state_t)
         next_state_Q_val = to_numpy(next_state_Q_val)
 
-        if self.args.has_ddqn:
+        if self.args.is_ddqn:
             next_state_Q_max_idx = np.argmax(next_state_Q_val, axis=1)
             next_state_target_val = self.target_model(next_state_t)
             next_state_target_val = to_numpy(next_state_target_val)
@@ -185,7 +180,7 @@ class AgentDQN(nn.Module):
         td_errors = np.abs(to_numpy(Q_next) - to_numpy(Q_cur))
 
         # PER
-        if self.args.has_prioritized:
+        if self.args.is_prioritized:
             self.update_priority(td_errors, idxs)
 
         return loss_dqn
@@ -200,24 +195,39 @@ class AgentDQN(nn.Module):
             self.memory.update(idx, td_errors[i]) 
         
     def update_target(self):
-        if self.args.has_ddqn:
+        if self.args.is_ddqn:
             if self.total_steps % self.args.target_update == 0:
                 self.target_model.load_state_dict(self.dqn_model.state_dict())
 
     # OVERRIDABLE
     def print_debug(self, i_episode, exec_time):
         if self.args.debug:
-            dqn_loss = self.loss_dqn[-1]
-            ers = self.ers[-1]
-            info = f"i_episode: {i_episode}   |   epsilon: {self.epsilon:.4f}   |    dqn:  {dqn_loss:.4f}   |   ers:  {ers:.2f}   |   time: {exec_time:.4f}"
+            dqn_loss = self.loss_dqn[-1] if self.loss_dqn else 0
+            ers = sum(self.e_reward)
+            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f}"
                 
             return info
+
+    # CALL AS SUPPER
+    def get_results(self):
+        d = {}
+        d['episode'] = self.current_episode
+        d['e_score'] = sum(self.e_reward)
+        d['e_score_min'] = min(self.e_reward)
+        d['e_score_max'] = max(self.e_reward)
+        d['score_avg'] = average(self.ers)
+        d['score_best'] = max(self.ers)
+        d['loss'] = average(self.e_loss_dqn)
+        
+        return d
+        
 
     # CALL AS SUPER
     def terminal_episode(self):
         dqn_avg = average(self.e_loss_dqn)
         self.loss_dqn.append(dqn_avg)
-        self.ers.append(self.e_reward)
+        self.ers.append(sum(self.e_reward))
+        self.current_episode += 1
 
     # CALL AS SUPER
     def remember_episode(self, loss_dqn):
