@@ -1,7 +1,7 @@
 import numpy as np
 import random, math
 from collections import deque
-
+import torch
 class SumTree:
     write = 0
 
@@ -78,7 +78,8 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
         self.is_per = is_per
 
     def _getPriority(self, error):
-        return (error + self.PER_e) ** self.PER_a
+        e = (error + self.PER_e) ** self.PER_a
+        return e
 
     def get_entries(self):
         return self.tree.n_entries if self.is_per else len(self.mem)
@@ -103,14 +104,12 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
         if math.isnan(self.tree.total()):
             x = 0
 
-        
-
         for i in range(n):
             a = segment * i
             b = segment * (i + 1)
 
             s = random.uniform(a, b)
-            (idx, p, data) = self.tree.get(s)
+            idx, p, data = self.tree.get(s)
             batch.append(data)
             idx_arr.append(idx)
             priority_arr.append(p)
@@ -119,12 +118,14 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
         importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.PER_b)
         importance_sampling_weight /= importance_sampling_weight.max()
 
-        return np.array(batch), np.array(idx_arr), importance_sampling_weight
+        # state_t = torch.stack([x[0] for x in batch])
+
+        return batch, np.array(idx_arr), importance_sampling_weight
 
     def random_batch(self, n):
         buffer_size = len(self.mem)
         index = np.random.choice(np.arange(buffer_size), size = n, replace = False)
-        batch = np.array([self.mem[i] for i in index])
+        batch = [self.mem[i] for i in index]
 
         return batch, None, None
 

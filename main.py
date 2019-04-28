@@ -1,4 +1,4 @@
-# pip install box2d-py
+# pip install box2d-py, gym, pandas, visualdl, opencv-python
 import logging
 
 from visualdl import LogWriter # Has to be imported before everython elese, otherwise dumps
@@ -11,7 +11,6 @@ from multiprocessing import Pool, Process, Lock
 import pandas as pd
 
 from agent_dqn import AgentDQN
-from agent_curious import AgentCurious
 
 from modules.args_utils import ArgsUtils
 from modules.csv_utils import CsvUtils
@@ -45,24 +44,22 @@ parser.add_argument('-n_frames', default=9999, type=int, help='Number of frames 
 parser.add_argument('-is_prioritized', default=True, type=arg_to_bool, help='Is priositized experience replay beeing used?')
 parser.add_argument('-memory_size', default=10000, type=int, help="Replay memory size (This code uses sum tree, not deque)")
 
-parser.add_argument('-is_images', default=False, type=arg_to_bool, help='Whether or not the game state is an image')
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
-parser.add_argument('-n_sequence', default=4, type=int, help='How many frames/channels will be passed in encoder')
-parser.add_argument('-n_frame_skip', default=4, type=int, help='How many frames to skip, before pushing to frame stack')
+parser.add_argument('-n_sequence', default=4, type=int, help='How many stacked states will be passed to encoder')
+parser.add_argument('-n_frame_skip', default=1, type=int, help='How many frames to skip, before pushing to frame stack')
 parser.add_argument('-image_crop', type=int, nargs='+', help='Coordinates to crop image, x1 y1 x2 y2')
-
-parser.add_argument('-parralel_runs', default=5, type=int, help="How many parralel agents to simulate")
-parser.add_argument('-n_processes', default=3, type=int, help="How many parralel processes to run (MODE 3)")
+parser.add_argument('-is_grayscale', default=False, type=arg_to_bool, help='Whether state image is converted from RGB to grayscale ')
 
 parser.add_argument('-is_curiosity', default=False, type=arg_to_bool, required=True)
 parser.add_argument('-curiosity_beta', default=-1.0, type=float, help='Beta hyperparameter for curiosity module')
 parser.add_argument('-curiosity_lambda', default=-1.0, type=float, help='Lambda hyperparameter for curiosity module')
 parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
 
+parser.add_argument('-encoder_type', default='nothing', nargs='?', choices=['nothing', 'simple', 'conv'], help='Which type od encoder to use, depends on game state (default: %(default)s)')
 parser.add_argument('-simple_encoder_1_layer_out', default=5, type=int)
-parser.add_argument('-simple_encoder_2_layer_out', default=10, type=int)
+parser.add_argument('-simple_encoder_2_layer_out', default=5, type=int)
 
-parser.add_argument('-encoder_layer_out', default=15, type=int,)
+parser.add_argument('-conv_encoder_layer_out', default=15, type=int,)
 
 parser.add_argument('-inverse_1_layer_out', default=30, type=int,)
 parser.add_argument('-inverse_2_layer_out', default=25, type=int,)
@@ -91,7 +88,6 @@ save_dir = "save"
 
 tmp = [
     'episode',
-    'run',
     'e_score', # add extra params that you are interested in
     'e_score_min',
     'e_score_max',
@@ -135,7 +131,6 @@ if torch.cuda.is_available():
 mode = { 
         0: 'comparison',
         1: 'evaluate',
-        2: 'multiprocess'
     }
 
 def main():
@@ -143,7 +138,6 @@ def main():
     run = {
         0: comparison,
         1: evaluate,
-        2: multiprocess,
         }
     
     run[args.mode]()
@@ -264,111 +258,31 @@ def comparison():
 # ==== MODE 1 ======
 def evaluate():   
     save_folder = datetime.datetime.now().strftime("%b-%d-%H:%M")
-    all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
-
-    # logW = get_cleaned_logger(folder_name='eval')
+    all_ers = np.zeros(shape=(args.n_episodes))
    
-    for run in range(args.parralel_runs):
-        start_run = time.time()
-        agent = AgentCurious(args, name='curious')
+    agent = AgentDQN(args, name='curious')
         
-        for i_episode in range(args.n_episodes):
-            start = time.time()
-            agent.reset_env()
-            is_done = False
-            
-            while not is_done:
-                is_done = agent.play_step()
-                
-                             
-            all_ers[run][i_episode] = sum(agent.e_reward)
-            t = time.time() - start
-
-            if i_episode % 1 == 0 and i_episode > 10: # every 100th episode
-                #TODO populate state (pass to agent)
-                state = agent.get_results()
-                state['run'] = run
-
-                CsvUtils.add_results_local(args, state)
-
-            # save_model(agent, run, i_episode, folder_name=save_folder)
-            if args.debug:
-                logging.info(agent.print_debug(i_episode, t))
+    for i_episode in range(args.n_episodes):
+        start = time.time()
+        agent.reset_env()
+        is_done = False
+        
+        while not is_done:
+            is_done = agent.play_step()
+                         
+        all_ers[i_episode] = sum(agent.e_reward)
+        t = time.time() - start
 
         state = agent.get_results()
-        CsvUtils.add_results(args, state)
-        logging.info('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
+        CsvUtils.add_results_local(args, state)
 
+        if args.debug:
+            logging.info(agent.print_debug(i_episode, t))
 
-def init_child(lock_):
-    global lock
-    lock = lock_
+    state = agent.get_results()
+    CsvUtils.add_results(args, state)
+    logging.info(f'Report: {args.id}  |   finished in {t:.2f} s')
 
-# Runs multiple agents in parralel, then takes averages
-def parralel_evaluate(params):
-    grid_args = args
-    grid_args.curiosity_beta = params['curiosity_beta']
-    grid_args.curiosity_lambda = params['curiosity_lambda']
-    grid_args.batch_size = params['batch_size']
-
-    all_ers = np.zeros(shape=(args.parralel_runs, args.n_episodes))
-    start_all = time.time()
-
-    for run in range(args.parralel_runs):
-        start_run = time.time()
-
-        agent = AgentCurious(grid_args, name='curious')
-
-        for i_episode in range(args.n_episodes):
-            agent.reset_env()
-            is_done = False
-            
-            while not is_done:
-                is_done = agent.play_step()
-
-            if args.debug and i_episode % 10 == 0:
-                print('i_episode:', i_episode, multiprocessing.current_process().name)
-
-            all_ers[run][i_episode] = agent.ers[-1]
-
-        if args.debug:     
-            print('Run Nr: {}   |    Process id:{}   |    finished in {:.2f} s'.format(run, multiprocessing.current_process().name, (time.time() - start_run)))
-        
-        # End of i_episodes
-    # End of runs
-
-    # CSV logging
-    data = params
-    avg = all_ers.mean()
-    data['ers_avg'] = [avg]
-    df = pd.DataFrame(data)   
-    fn = agent.args.env_name
-    writefile(df, fn, lock)
-
-    print('{} logged: {} in {:.2f} s'.format(args.env_name, df.values[0], time.time() - start_all))
-
-    
-
-# ==== MODE 2 ======   
-def multiprocess():
-    curiosity_beta = np.round(np.arange(0, 1.1, 0.1), 1)
-    curiosity_lambda = np.round(np.arange(0, 1.1, 0.1), 1)
-    batch_size = [32]#, 64, 128, 256]
-    param_grid = {'curiosity_beta': curiosity_beta, 'curiosity_lambda': curiosity_lambda, 'batch_size': batch_size}
-    p = ParameterGrid(param_grid)
-    p = list(p)
-
-    lock = Lock()
-    pool = Pool(processes=args.n_processes, initializer=init_child, initargs=(lock,))                                                        
-    pool.map(parralel_evaluate, p) 
-    #parralel_evaluate(p[0])
-
-def writefile(df, file_name, lock):
-    with lock:
-        ex = os.getcwd() + "/" + file_name + ".csv"
-        f = not os.path.exists(ex)
-        df.to_csv(file_name + ".csv", mode='a', sep=',', header=f)
-        
 
 if __name__ == '__main__':
     main()

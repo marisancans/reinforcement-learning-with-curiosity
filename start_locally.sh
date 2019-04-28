@@ -52,17 +52,20 @@ source activate ml
 
 python ./taskgen_v2.py \
 -is_hpc False \
--process_count_per_task 2 \
+-hpc_cpu_count 1 \
+-process_count_per_task 1 \
 -single_task False \
 -repeat 1 \
 -conda_env ml \
--report pole \
--params_grid curiosity_lambda curiosity_beta \
--curiosity_lambda 0.2 0.4 0.6 0.8 1.0 \
--curiosity_beta 0.2 0.4 0.6 0.8 1.0 \
--learning_rate 1e-3 \
+-report apr_28_cart_pole_grid \
+-params_grid batch_size learning_rate \
+-batch_size 32 64 \
+-learning_rate 1e-3 1e-2 \
 -env_name CartPole-v0 \
--epsilon_decay 1e-4 \
+-epsilon_decay 1e-3 \
+-debug false \
 -is_curiosity true \
--debug true \
--n_episodes 200 \
+-device cpu \
+-n_episodes 15 \
+-device cpu \
+
