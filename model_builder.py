@@ -49,12 +49,12 @@ class ModelBuilder():
         seq = init_parameters('dqn', seq)
         return seq
 
-
     def build_inverse_model(self):
         seq = torch.nn.Sequential(
             nn.Linear(in_features=self.get_encoder_out() * 2, out_features=self.args.inverse_1_layer_out),
             nn.ReLU(),
             nn.Linear(in_features=self.args.inverse_1_layer_out, out_features=self.n_actions),
+            nn.Softmax()
         ).to(self.args.device)
 
         seq = init_parameters('inverse', seq)
@@ -64,7 +64,7 @@ class ModelBuilder():
         seq = torch.nn.Sequential(
             nn.Linear(in_features=self.get_encoder_out() + self.n_actions, out_features=self.args.forward_1_layer_out), # input actions are one hot encoded
             nn.ReLU(),
-            nn.Linear(in_features=self.args.forward_1_layer_out, out_features=self.get_encoder_out())
+            nn.Linear(in_features=self.args.forward_1_layer_out, out_features=self.get_encoder_out()),
         ).to(self.args.device)
         
         seq = init_parameters('forward', seq)

@@ -28,17 +28,17 @@
                     "-target_update", "10000",
 
                     "-debug", "true",
-                    "-debug_features", "true",
-                    "-debug_images", "true",
-                    "-device", "cuda",
+                    "-debug_features", "false",
+                    "-debug_images", "false",
+                    "-device", "cpu",
                     "-learning-rate","0.001",
                     "-image_crop", "0", "26", "160", "200",
                     "-image_scale", "0.5",
                     "-save_interval", "100",
 
                     
-                    "-memory", "1000000",
-                    "-batch_size", "32",
+                    "-memory", "1000",
+                    "-batch_size", "5",
                     "-debug_activations", "1 5 1",
                     "-n_frame_skip","1",
 

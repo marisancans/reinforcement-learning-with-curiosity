@@ -23,7 +23,7 @@ def average(x):
     return sum(x) / len(x)
 
 
-class AgentDQN(nn.Module):
+class Agent(nn.Module):
     def __init__(self, args, name):
         super().__init__()
 
@@ -70,7 +70,6 @@ class AgentDQN(nn.Module):
         self.optimizer = torch.optim.Adam(params=params, lr = self.args.learning_rate)
 
         self.dqn_model_loss_fn = nn.MSELoss()
-        self.inverse_model_loss_fn = nn.MSELoss()
 
         # --------- INTERNAL STATE -------
         self.current_episode = 0
@@ -394,7 +393,9 @@ class AgentDQN(nn.Module):
         # --------------- INVERSE MODEL -----------------------
         trans = torch.cat((state_t, next_state_t), dim=1)
         pred_action = self.inverse_model(trans)
-        loss_inverse = self.inverse_model_loss_fn(pred_action, recorded_action_t)
+
+        loss_inverse = -torch.log(pred_action)
+        loss_inverse = loss_inverse.mean()
 
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
         cat_t = torch.cat((state_t, recorded_action_t), dim=1)

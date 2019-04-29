@@ -10,7 +10,7 @@ from sklearn.model_selection import ParameterGrid
 from multiprocessing import Pool, Process, Lock
 import pandas as pd
 
-from agent_dqn import AgentDQN
+from agent import Agent
 
 from modules.args_utils import ArgsUtils
 from modules.csv_utils import CsvUtils
@@ -229,10 +229,10 @@ def comparison():
         all_ers[n] = np.zeros(shape=(args.parralel_runs, args.n_episodes)) 
    
     for run in range(args.parralel_runs):
-        agents['dqn'] = AgentDQN(args, name='dqn')
-        agents['ddqn'] = AgentDQN(ddqn_args, name='ddqn')
-        agents['curious'] = AgentCurious(curious_args, name='curious')
-        agents['curious_ddqn'] = AgentCurious(curious_ddqn_args, name='curious_ddqn')
+        agents['dqn'] = Agent(args, name='dqn')
+        agents['ddqn'] = Agent(ddqn_args, name='ddqn')
+        agents['curious'] = Agent(curious_args, name='curious')
+        agents['curious_ddqn'] = Agent(curious_ddqn_args, name='curious_ddqn')
 
         for n, a in agents.items():
             for i_episode in range(args.n_episodes):
@@ -260,7 +260,7 @@ def evaluate():
     save_folder = datetime.datetime.now().strftime("%b-%d-%H:%M")
     all_ers = np.zeros(shape=(args.n_episodes))
    
-    agent = AgentDQN(args, name='curious')
+    agent = Agent(args, name='curious')
         
     for i_episode in range(args.n_episodes):
         start = time.time()
