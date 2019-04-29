@@ -1,14 +1,8 @@
 # pip install box2d-py, gym, pandas, visualdl, opencv-python
-import logging
 
-from visualdl import LogWriter # Has to be imported before everython elese, otherwise dumps
-import Box2D, os, shutil, datetime, time, random, sys, torch, argparse, gym, pandas, copy
+import logging, Box2D, os, shutil, datetime, time, random, sys, torch, argparse, gym, pandas, copy
 from gym import envs
 import numpy as np
-import multiprocessing
-from sklearn.model_selection import ParameterGrid
-from multiprocessing import Pool, Process, Lock
-import pandas as pd
 
 from agent import Agent
 
@@ -83,9 +77,6 @@ parser.add_argument('-name', help='Run name, by default date', default='test', t
 
 args, args_other = parser.parse_known_args()
 
-logdir = "./logs/"
-save_dir = "save"
-
 tmp = [
     'episode',
     'e_score', # add extra params that you are interested in
@@ -126,7 +117,7 @@ ArgsUtils.log_args(args, 'main.py', logging_utils)
 CsvUtils.create_local(args)
 
 if torch.cuda.is_available():
-    print('cuda detected')
+    logging.info('cuda detected')
 
 mode = { 
         0: 'comparison',
@@ -142,67 +133,6 @@ def main():
     
     run[args.mode]()
 
-def get_cleaned_logger(folder_name):
-    d = logdir + folder_name
-    if os.path.exists(d):
-        shutil.rmtree(d)
-
-    return LogWriter(d, sync_cycle=1000)
-
-def log_evaluate_agent(ers_avg, folder_name):
-    logW = get_cleaned_logger(folder_name)
-
-
-def log_comparison_agents(all_ers, folder_name):
-    logW = get_cleaned_logger(folder_name)
-    data = {}
-
-    for agent_name, ers in all_ers.items():
-        ers = np.array(ers)
-    
-        score_avg = np.sum(ers, axis=0) / args.parralel_runs
-        score_std = np.std(ers, axis=0)
-
-        with logW.mode(agent_name):
-            l = logW.scalar('avg_score_' + args.env_name)
-
-        for t, x in enumerate(score_avg):
-            l.add_record(t, x)
-        
-        data[agent_name + "_avg_score"] = score_avg
-        data[agent_name + "_std"] = score_std
-
-    file_name = "ers_data.csv"
-    ex = logdir + folder_name + "/" + file_name
-    f = not os.path.exists(ex)
-
-    df = pd.DataFrame(data)
-    df.to_csv(ex, mode='a', sep=',', header=f)
-
-def save_model(agent, run, i_episode, folder_name):
-    if i_episode % args.save_interval == 0:
-        folder = os.path.join(save_dir, folder_name)
-        
-        models = {}
-        models['dqn'] = agent.dqn_model
-
-        if agent.args.is_curiosity:
-            models['inverse'] = agent.inverse_model
-            models['forward'] = agent.forward_model
-            models['encoder'] = agent.encoder_model
-
-        for name in models:
-            fn = os.path.join(folder, name)
-            if not os.path.exists(fn):
-                os.makedirs(fn)
-
-        for name, model in models.items():
-            file_name = "{}__run_{}__i_ep_{}".format(name, run, i_episode)
-            path = os.path.join(os.getcwd(), folder, name, file_name)
-            torch.save(model.state_dict(), path)
-        
-        #TODO use logging.info(f'..')
-        logging.info(f'saved checkpoint ar run: {run}  |  i_episode: {i_episode}')
 
 # This mode compares n agents
 # ==== MODE 0 ======

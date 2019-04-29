@@ -54,7 +54,7 @@ class ModelBuilder():
             nn.Linear(in_features=self.get_encoder_out() * 2, out_features=self.args.inverse_1_layer_out),
             nn.ReLU(),
             nn.Linear(in_features=self.args.inverse_1_layer_out, out_features=self.n_actions),
-            nn.Softmax()
+            #nn.Softmax()
         ).to(self.args.device)
 
         seq = init_parameters('inverse', seq)
