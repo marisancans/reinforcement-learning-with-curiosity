@@ -34,7 +34,7 @@ class Agent(nn.Module):
 
         # --------- ENVIROMENT ----------
         self.env = gym.make(self.args.env_name)
-        self.current_features_sequence = None # Gets set in self.reset_env(). This holds encoded sequence if enabled
+        self.current_state = None # Gets set in self.reset_env(). This holds encoded sequence if enabled
 
         # --------- ENV STATE --------------- 
         self.n_states = self.env.observation_space.shape[0]
@@ -174,7 +174,7 @@ class Agent(nn.Module):
         if self.args.is_curiosity: 
             state_t = self.get_next_sequence(state_t)
         
-        self.current_features_sequence = state_t
+        self.current_state = state_t
 
         self.e_loss_dqn.clear()
         self.e_reward .clear()
@@ -187,27 +187,29 @@ class Agent(nn.Module):
         return state
 
     def act(self):
-        # Pick random action ( Exploration )
+        # Explore
         if random.random() <= self.epsilon:
             action_idx = random.randint(0, self.n_actions - 1)
+        # Exploit
         else:
-            act_values = self.dqn_model(self.current_features_sequence) 
+            s = torch.FloatTensor(self.current_state)
+            act_values = self.dqn_model(s) 
             _, action_idx = act_values.max(dim=0)
             action_idx = to_numpy(action_idx)
 
-        act_vector = torch.zeros(self.n_actions)
-        act_vector[action_idx] = 1.0
+        act_vector_t = torch.zeros(self.n_actions)
+        act_vector_t[action_idx] = 1.0
 
-        return action_idx, act_vector
+        return action_idx, act_vector_t
 
     def play_step(self):
-        action, act_values_t = self.act()
+        action, act_vector_t = self.act()
         next_state, reward, is_terminal, _ = self.env.step(action)
 
         if self.args.is_normalized_state:
             next_state = self.normalize_state(next_state)
 
-        self.after_step(act_values_t, reward, next_state, is_terminal)
+        self.after_step(act_vector_t, reward, next_state, is_terminal)
         self.end_step(reward)
 
         if is_terminal:
@@ -215,23 +217,21 @@ class Agent(nn.Module):
         
         return is_terminal
 
-    def after_step(self, act_values_t, reward, next_state, is_terminal):
+    def after_step(self, act_vector_t, reward, next_state, is_terminal):
         if self.args.encoder_type == 'conv':
             next_state = self.preproprocess_frame(next_state)
 
         next_state_t = torch.FloatTensor(next_state).to(self.args.device)
+        reward_t = torch.FloatTensor([reward]).to(self.args.device)
 
         if self.args.is_curiosity:
             next_state_t = self.get_next_sequence(next_state_t)
 
-        reward_t = torch.FloatTensor([reward]).to(self.args.device)
-
-        t = 0.0 if is_terminal else 1.0
-        t = torch.FloatTensor([t]).to(self.args.device)
-        transition = [self.current_features_sequence, act_values_t, reward_t, next_state_t, t]
+        t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
+        transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]
         self.memory.add(transition)
 
-        self.current_features_sequence = next_state_t
+        self.current_state = next_state_t
 
     def end_step(self, reward):
         self.e_reward.append(reward)
@@ -249,9 +249,9 @@ class Agent(nn.Module):
 
         state_t = torch.stack([x[0] for x in minibatch])
         recorded_action_t = torch.stack([x[1] for x in minibatch])
-        reward_t = torch.stack([x[2] for x in minibatch])
+        reward_t = torch.cat([x[2] for x in minibatch])
         next_state_t = torch.stack([x[3] for x in minibatch])
-        done_t = torch.stack([x[4] for x in minibatch])
+        done_t = torch.cat([x[4] for x in minibatch])
 
         # CURIOSITY LOSS
         if self.args.is_curiosity:
@@ -311,9 +311,6 @@ class Agent(nn.Module):
             self.epsilon -= self.args.epsilon_decay
    
     # ====     AGENT INTERNAL STATE    =====
-    def update_target(self):
-        self.target_model.load_state_dict(self.dqn_model.state_dict())
-
     def update_priority(self, td_errors, idxs):
         for i in range(self.args.batch_size):
             idx = idxs[i]
@@ -357,33 +354,31 @@ class Agent(nn.Module):
     # ================       MODEL TARAINING ====================== 
 
     def train_dqn_model(self, state_t, recorded_action_t, reward_t, next_state_t, done_t, importance_sampling_weight, idxs):
-        next_state_Q_val = self.dqn_model(next_state_t)
+        next_state_Q_val = self.dqn_model(next_state_t) 
 
         if self.args.is_ddqn:
             _, next_state_Q_max_idx = next_state_Q_val.max(dim=1)
             next_state_Q_max_idx = torch.unsqueeze(next_state_Q_max_idx, dim=1)
             next_state_target_val = self.target_model(next_state_t)
-            next_state_Q_max_t = torch.gather(next_state_target_val, dim=1, index=next_state_Q_max_idx)
+            next_state_Q_max = torch.gather(next_state_target_val, dim=1, index=next_state_Q_max_idx)
+            next_state_Q_max = torch.squeeze(next_state_Q_max, dim=1) 
         else:
-            next_state_Q_max_t, _ = next_state_Q_val.max(dim=1, keepdim=True)
+            next_state_Q_max, _ = next_state_Q_val.max(dim=1) 
 
-        # If the game has ended done=0, gets multiplied and extrinsic reward is just itself given this state
-        # R(s, a) + gamma * max(Q'(s', a')
-        Q_next = reward_t + done_t * self.args.gamma * next_state_Q_max_t
+        Q_next_t = reward_t + done_t * self.args.gamma * next_state_Q_max
 
-        Q_cur = self.dqn_model(state_t)
-        Q_cur = Q_cur * recorded_action_t 
-        Q_cur = torch.sum(Q_cur, dim=1, keepdim=True) # gets rid of zeros
+        Q_cur_t = self.dqn_model(state_t)
+        Q_cur_t = Q_cur_t * recorded_action_t 
+        Q_cur_t = torch.sum(Q_cur_t, dim=1) # gets rid of zeros
 
-        loss_dqn = self.dqn_model_loss_fn(Q_cur, Q_next) # y_prim, y 
+        loss_dqn = self.dqn_model_loss_fn(Q_cur_t, Q_next_t)
 
         if importance_sampling_weight is not None:
             loss_dqn = (torch.FloatTensor(importance_sampling_weight).to(self.args.device) * loss_dqn)
 
-
-        # PER
+        # # PER
         if self.args.is_prioritized:
-            td_errors = torch.abs(torch.squeeze(Q_next, dim=1) - torch.squeeze(Q_cur, dim=1))
+            td_errors = torch.abs(Q_next_t - Q_cur_t)
             self.update_priority(to_numpy(td_errors), idxs)
 
         return loss_dqn
