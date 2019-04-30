@@ -373,7 +373,7 @@ class Agent(nn.Module):
 
         Q_cur = self.dqn_model(state_t)
         Q_cur = Q_cur * recorded_action_t 
-        Q_cur = torch.sum(Q_cur, dim=1) # gets rid of zeros
+        Q_cur = torch.sum(Q_cur, dim=1, keepdim=True) # gets rid of zeros
 
         loss_dqn = self.dqn_model_loss_fn(Q_cur, Q_next) # y_prim, y 
 
@@ -383,7 +383,7 @@ class Agent(nn.Module):
 
         # PER
         if self.args.is_prioritized:
-            td_errors = torch.abs(torch.squeeze(Q_next, dim=1) - Q_cur)
+            td_errors = torch.abs(torch.squeeze(Q_next, dim=1) - torch.squeeze(Q_cur, dim=1))
             self.update_priority(to_numpy(td_errors), idxs)
 
         return loss_dqn
