@@ -63,29 +63,28 @@ class SumTree:
 
 
 #-------------------- MEMORY --------------------------
-# Memory is either deque where batch is uniformly sampled or sumtree with prioritized selection
-class Memory:   # stored as ( s, a, r, s_ ) in SumTree
-    PER_e = 0.01  # Hyperparameter that we use to avoid some experiences to have 0 probability of being taken
-    PER_a = 0.6  # Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly
-    PER_b = 0.4  # importance-sampling, from initial value increasing to 1
-
-    def __init__(self, capacity, is_per):
-        if is_per:
-            self.tree = SumTree(capacity)
+class Memory:  
+    def __init__(self, args):
+        if args.is_prioritized:
+            self.tree = SumTree(args.memory_size)
         else:
-            self.mem = deque(maxlen=capacity)
+            self.mem = deque(maxlen=args.memory_size)
 
-        self.is_per = is_per
+        self.is_prioritized = args.is_prioritized
+
+        self.per_e = args.per_e  
+        self.per_a = args.per_a 
+        self.per_b = args.per_b
 
     def _getPriority(self, error):
-        e = (error + self.PER_e) ** self.PER_a
+        e = (error + self.per_e) ** self.per_a
         return e
 
     def get_entries(self):
-        return self.tree.n_entries if self.is_per else len(self.mem)
+        return self.tree.n_entries if self.is_prioritized else len(self.mem)
 
     def add(self, transition, error=10000):  # because its initially unknown and has to be high priority
-        if self.is_per:
+        if self.is_prioritized:
             p = self._getPriority(error)
             self.tree.add(p, transition) 
         else:
@@ -93,7 +92,7 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
 
 
     def get_batch(self, n):
-        return self.uniform_segment_batch(n) if self.is_per else self.random_batch(n)
+        return self.uniform_segment_batch(n) if self.is_prioritized else self.random_batch(n)
 
     def uniform_segment_batch(self, n):
         batch = []
@@ -115,7 +114,7 @@ class Memory:   # stored as ( s, a, r, s_ ) in SumTree
             priority_arr.append(p)
 
         sampling_probabilities = priority_arr / self.tree.total()
-        importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.PER_b)
+        importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.per_b)
         importance_sampling_weight /= importance_sampling_weight.max()
 
         # state_t = torch.stack([x[0] for x in batch])

@@ -20,7 +20,7 @@ parser.add_argument('-device', default='cpu', help='cpu or cuda')
 parser.add_argument('-debug', default=False, type=arg_to_bool, help='Extra print statements between episodes')
 parser.add_argument('-debug_features', default=False, type=arg_to_bool, help='Use opencv to peer into feature states')
 parser.add_argument('-debug_images', default=False, type=arg_to_bool, help='Use opencv to debug stacked frames')
-parser.add_argument('-debug_activations', type=str, nargs='+', help='Show activation maps. Args: denseblock denselayer convlayer. Example: 1 13 2')
+parser.add_argument('-debug_activations', default='0 0 0 0', type=str, nargs='+', help='Show activation maps. Args: denseblock denselayer convlayer. Example: 1 13 2')
 
 parser.add_argument('-save_interval', default=100, type=int, help='Save model after n steps')
 
@@ -37,11 +37,14 @@ parser.add_argument('-n_frames', default=9999, type=int, help='Number of frames 
 
 parser.add_argument('-is_prioritized', default=True, type=arg_to_bool, help='Is priositized experience replay beeing used?')
 parser.add_argument('-memory_size', default=10000, type=int, help="Replay memory size (This code uses sum tree, not deque)")
+parser.add_argument('-per_e', default=0.01, type=float, help='Hyperparameter that we use to avoid some experiences to have 0 probability of being taken')
+parser.add_argument('-per_a', default=0.6, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly')
+parser.add_argument('-per_b', default=0.4, type=float, help='Importance-sampling, from initial value increasing to 1')
 
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
 parser.add_argument('-n_sequence', default=4, type=int, help='How many stacked states will be passed to encoder')
 parser.add_argument('-n_frame_skip', default=1, type=int, help='How many frames to skip, before pushing to frame stack')
-parser.add_argument('-image_crop', type=int, nargs='+', help='Coordinates to crop image, x1 y1 x2 y2')
+parser.add_argument('-image_crop', default=0, type=int, nargs='+', help='Coordinates to crop image, x1 y1 x2 y2')
 parser.add_argument('-is_grayscale', default=False, type=arg_to_bool, help='Whether state image is converted from RGB to grayscale ')
 
 parser.add_argument('-is_curiosity', default=False, type=arg_to_bool, required=True)
@@ -113,6 +116,7 @@ logging_utils = LoggingUtils(filename=os.path.join(run_path, 'log.txt'))
 is_logged_cnorm = False
 
 ArgsUtils.log_args(args, 'main.py', logging_utils)
+logging.info('global args ok')
 
 CsvUtils.create_local(args)
 
@@ -125,7 +129,7 @@ mode = {
     }
 
 def main():
-    print('Running mode: {}'.format(mode[args.mode]))
+    logging.info('Running mode: {}'.format(mode[args.mode]))
     run = {
         0: comparison,
         1: evaluate,
@@ -188,9 +192,9 @@ def comparison():
 # ==== MODE 1 ======
 def evaluate():   
     save_folder = datetime.datetime.now().strftime("%b-%d-%H:%M")
-    all_ers = np.zeros(shape=(args.n_episodes))
    
     agent = Agent(args, name='curious')
+    logging.info('Agent created, starting training')
         
     for i_episode in range(args.n_episodes):
         start = time.time()
@@ -200,9 +204,9 @@ def evaluate():
         while not is_done:
             is_done = agent.play_step()
                          
-        all_ers[i_episode] = sum(agent.e_reward)
         t = time.time() - start
 
+        
         state = agent.get_results()
         CsvUtils.add_results_local(args, state)
 

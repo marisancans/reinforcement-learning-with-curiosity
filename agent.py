@@ -7,7 +7,7 @@ from modules.torch_utils import init_parameters
 from modules.torch_utils import to_numpy
 from modules.opencv_utils import debug_encoded_states
 
-import random, gym, os, cv2, time
+import random, gym, os, cv2, time, logging
 from gym import envs
 import numpy as np
 from collections import deque
@@ -31,10 +31,12 @@ class Agent(nn.Module):
         self.name = name
         self.check_args(args)
         self.args = args
+        logging.info('agent args ok')
 
         # --------- ENVIROMENT ----------
         self.env = gym.make(self.args.env_name)
         self.current_state = None # Gets set in self.reset_env(). This holds encoded sequence if enabled
+        logging.info('agent enviroment ok')
 
         # --------- ENV STATE --------------- 
         self.n_states = self.env.observation_space.shape[0]
@@ -44,6 +46,7 @@ class Agent(nn.Module):
         self.state_min_val = self.env.observation_space.high.max()
         self.n_actions = self.env.action_space.n
         self.epsilon = 1.0
+        logging.info('agent state ok')
 
         # --------- MODELS --------------
         if self.args.encoder_type != 'nothing':
@@ -60,6 +63,7 @@ class Agent(nn.Module):
         if self.args.is_curiosity:
             self.inverse_model = builder.build_inverse_model()
             self.forward_model = builder.build_forward_model()
+        logging.info('agent models ok')
 
         # --------   OPTIMIZER AND LOSS  ----
         if self.args.is_curiosity:
@@ -69,13 +73,14 @@ class Agent(nn.Module):
 
         self.optimizer = torch.optim.Adam(params=params, lr = self.args.learning_rate)
 
-        self.dqn_model_loss_fn = nn.MSELoss()
+        logging.info('agent optimizer and loss ok')
 
         # --------- INTERNAL STATE -------
         self.current_episode = 0
         self.total_steps = 0 # in all episodes combined
         self.current_step = 0 # only in current episode
-        self.memory = Memory(capacity=self.args.memory_size, is_per=self.args.is_prioritized)
+        self.memory = Memory(self.args)
+        logging.info('agent memory ok')
 
         # ----- TRAINING BUFFER --------
         self.loss_dqn = []
@@ -103,21 +108,27 @@ class Agent(nn.Module):
     # ======    ARG CHECKING =============
     def check_args(self, args):
         if args.batch_size < 4:
-            logger('Batch size too small!')
+            logger.critical('Batch size too small!')
             os._exit(0) 
 
         if args.is_curiosity:
             if args.curiosity_beta == -1 or args.curiosity_lambda == -1:
-                print("Curiosity enabled but lambda or beta value hasnt been set!")
+                logger.critical("Curiosity enabled but lambda or beta value hasnt been set!")
                 os._exit(1)
 
             if args.encoder_type == 'nothing':
-                print("Encoder type cant be 'nothing' if curiosity enabled, change the type")
+                logger.critical("Encoder type cant be 'nothing' if curiosity enabled, change the type")
                 os._exit(1)
+            
+            if args.encoder_type == 'conv':
+                if not torch.cuda.is_available():
+                    logging.critical('Cuda not detected')
+                    os._exit(0)
 
-        if args.debug_activations and len(args.debug_activations[0].split()) != 3:
-            print('debug_activations len(args) != 3, check help for formatting')
-            os._exit(0)
+        if args.debug_features:
+            if args.debug_activations and len(args.debug_activations[0].split()) != 3:
+                logger.critical('debug_activations len(args) != 3, check help for formatting')
+                os._exit(0)
 
     def normalize_state(self, x):
         d = 2.*(x - self.state_min_val/self.state_max_val) - 1
@@ -127,8 +138,8 @@ class Agent(nn.Module):
     def preproprocess_frame(self, frame):
         if self.args.is_grayscale:
             frame = np.dot(frame[...,:3], [0.2989, 0.5870, 0.1140])
-        
-        if self.args.image_crop:
+
+        if len(self.args.image_crop) > 3:
             x1, y1, x2, y2 = self.args.image_crop
             frame = frame[y1:y2, x1:x2] 
 
@@ -179,7 +190,7 @@ class Agent(nn.Module):
         self.e_loss_dqn.clear()
         self.e_reward .clear()
 
-        if self.args.encoder_type != 'nothing':
+        if self.args.is_curiosity:
             self.e_loss_inverse.clear()
             self.e_loss_combined.clear()
             self.e_cos_distance.clear()
@@ -192,12 +203,11 @@ class Agent(nn.Module):
             action_idx = random.randint(0, self.n_actions - 1)
         # Exploit
         else:
-            s = torch.FloatTensor(self.current_state)
-            act_values = self.dqn_model(s) 
+            act_values = self.dqn_model(self.current_state) 
             _, action_idx = act_values.max(dim=0)
             action_idx = to_numpy(action_idx)
 
-        act_vector_t = torch.zeros(self.n_actions)
+        act_vector_t = torch.zeros(self.n_actions).to(self.args.device)
         act_vector_t[action_idx] = 1.0
 
         return action_idx, act_vector_t
@@ -256,7 +266,7 @@ class Agent(nn.Module):
         # CURIOSITY LOSS
         if self.args.is_curiosity:
             loss_inv, loss_cos = self.get_inverse_and_forward_loss(state_t, next_state_t, recorded_action_t)  
-            reward_t += torch.unsqueeze(loss_cos.detach(), dim=1) * self.args.curiosity_scale
+            reward_t += loss_cos.detach() * self.args.curiosity_scale
         
         # DQN LOSS
         loss_dqn = self.train_dqn_model(state_t, recorded_action_t, reward_t, next_state_t, done_t, importance_sampling_weight, idxs)
@@ -343,6 +353,8 @@ class Agent(nn.Module):
         d['score_avg'] = average(self.ers)
         d['score_best'] = max(self.ers)
         d['loss'] = average(self.e_loss_dqn)
+        d['per_a'] = self.args.per_a
+        d['per_b'] = self.args.per_b
 
         if self.args.is_curiosity:
             d['loss_inverse'] = average(self.loss_inverse)
@@ -371,13 +383,13 @@ class Agent(nn.Module):
         Q_cur_t = Q_cur_t * recorded_action_t 
         Q_cur_t = torch.sum(Q_cur_t, dim=1) # gets rid of zeros
 
-        loss_dqn = self.dqn_model_loss_fn(Q_cur_t, Q_next_t)
-
-        if importance_sampling_weight is not None:
-            loss_dqn = (torch.FloatTensor(importance_sampling_weight).to(self.args.device) * loss_dqn)
+        mse = nn.MSELoss(reduction='none') # REDUCTION PARAMETER!
+        loss_dqn = mse(Q_cur_t, Q_next_t)
 
         # # PER
         if self.args.is_prioritized:
+            loss_dqn = (torch.FloatTensor(importance_sampling_weight).to(self.args.device) * loss_dqn)
+
             td_errors = torch.abs(Q_next_t - Q_cur_t)
             self.update_priority(to_numpy(td_errors), idxs)
 
