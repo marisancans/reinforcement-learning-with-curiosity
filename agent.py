@@ -125,6 +125,11 @@ class Agent(nn.Module):
                     logging.critical('Cuda not detected')
                     os._exit(0)
 
+                if args.image_crop != 0:
+                    if len(args.image_crop) != 4:
+                        logging.critical('Image crop has to have 4 coordinates!')
+                        os._exit(0)
+
         if args.debug_features:
             if args.debug_activations and len(args.debug_activations[0].split()) != 3:
                 logging.critical('debug_activations len(args) != 3, check help for formatting')
@@ -139,7 +144,7 @@ class Agent(nn.Module):
         if self.args.is_grayscale:
             frame = np.dot(frame[...,:3], [0.2989, 0.5870, 0.1140])
 
-        if len(self.args.image_crop) > 3:
+        if self.args.image_crop != 0:
             x1, y1, x2, y2 = self.args.image_crop
             frame = frame[y1:y2, x1:x2] 
 
