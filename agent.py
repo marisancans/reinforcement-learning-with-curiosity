@@ -108,16 +108,16 @@ class Agent(nn.Module):
     # ======    ARG CHECKING =============
     def check_args(self, args):
         if args.batch_size < 4:
-            logger.critical('Batch size too small!')
+            logging.critical('Batch size too small!')
             os._exit(0) 
 
         if args.is_curiosity:
             if args.curiosity_beta == -1 or args.curiosity_lambda == -1:
-                logger.critical("Curiosity enabled but lambda or beta value hasnt been set!")
+                logging.critical("Curiosity enabled but lambda or beta value hasnt been set!")
                 os._exit(1)
 
             if args.encoder_type == 'nothing':
-                logger.critical("Encoder type cant be 'nothing' if curiosity enabled, change the type")
+                logging.critical("Encoder type cant be 'nothing' if curiosity enabled, change the type")
                 os._exit(1)
             
             if args.encoder_type == 'conv':
@@ -127,7 +127,7 @@ class Agent(nn.Module):
 
         if args.debug_features:
             if args.debug_activations and len(args.debug_activations[0].split()) != 3:
-                logger.critical('debug_activations len(args) != 3, check help for formatting')
+                logging.critical('debug_activations len(args) != 3, check help for formatting')
                 os._exit(0)
 
     def normalize_state(self, x):
