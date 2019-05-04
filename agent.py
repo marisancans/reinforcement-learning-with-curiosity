@@ -5,7 +5,7 @@ import torchvision.models as models
 
 from modules.torch_utils import init_parameters
 from modules.torch_utils import to_numpy
-from modules.opencv_utils import debug_encoded_states
+from modules.opencv_utils import debug_encoded_states, debug_sequence
 
 import random, gym, os, cv2, time, logging
 from gym import envs
@@ -170,11 +170,6 @@ class Agent(nn.Module):
     def get_next_sequence(self, next_state_t):        
         self.states_sequence.append(next_state_t)
 
-        # DEBUGGING
-        if self.args.debug_images:
-           self.debug_sequence()
-
-        
         features = self.get_features()
         return features
 
@@ -182,12 +177,13 @@ class Agent(nn.Module):
     def reset_env(self):
         state = self.env.reset()
 
-        if self.args.encoder_type == 'conv':
+        # If is image
+        if len(state.shape) == 3:
             state = self.preproprocess_frame(state)
 
         state_t = torch.FloatTensor(state).to(self.args.device)
 
-        if self.args.is_curiosity: 
+        if self.args.encoder_type == 'conv': 
             state_t = self.get_next_sequence(state_t)
         
         self.current_state = state_t
@@ -233,13 +229,13 @@ class Agent(nn.Module):
         return is_terminal
 
     def after_step(self, act_vector_t, reward, next_state, is_terminal):
-        if self.args.encoder_type == 'conv':
+        if len(next_state.shape) == 3:
             next_state = self.preproprocess_frame(next_state)
 
         next_state_t = torch.FloatTensor(next_state).to(self.args.device)
         reward_t = torch.FloatTensor([reward]).to(self.args.device)
 
-        if self.args.is_curiosity:
+        if self.args.encoder_type == 'conv':
             next_state_t = self.get_next_sequence(next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
@@ -421,5 +417,10 @@ class Agent(nn.Module):
         # DEBUGGING
         if self.args.debug_features:
             debug_encoded_states(pred_next_state, next_state_t)
+
+        # DEBUGGING
+        if self.args.debug_images:
+            key = self.args.debug_activations[0]
+            debug_sequence(self.states_sequence, self.feature_extractor.encoder.activations[key])
   
         return loss_inverse, loss_cos
