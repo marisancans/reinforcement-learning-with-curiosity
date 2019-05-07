@@ -141,7 +141,7 @@ def main():
 # This mode compares n agents
 # ==== MODE 0 ======
 def comparison():
-    # Args are passed as references, so deep copy is requred
+    # Args are passed as reference or is singleton, so deep copy is requred
     agents = {}
 
     args.is_curiosity = False
