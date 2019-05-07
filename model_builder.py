@@ -9,14 +9,6 @@ import random, re
 import numpy as np
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.models as models
-
-import random, re
-import numpy as np
-
 
 # =======           MODEL  BUILDER       =========
 
@@ -163,6 +155,7 @@ class ConvEncoderModule(nn.Module):
 
     def forward(self, x):
         features = self.encoder(x)
+        #features = nn.functional.tanh(features)
         #features = features.view(-1)
                
         return features

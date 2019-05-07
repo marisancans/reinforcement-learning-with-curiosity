@@ -149,7 +149,8 @@ class Agent(nn.Module):
             frame = frame[y1:y2, x1:x2] 
 
         s = self.args.image_scale
-        if s != 1:
+
+        if s != 1.0:
             frame = cv2.resize(frame, None, fx=s, fy=s, interpolation=cv2.INTER_LINEAR) # can test other interpolation types
         
         # (H, W, C) -> (C, H, W)
