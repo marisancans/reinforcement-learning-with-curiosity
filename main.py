@@ -37,9 +37,12 @@ parser.add_argument('-n_frames', default=9999, type=int, help='Number of frames 
 
 parser.add_argument('-is_prioritized', default=True, type=arg_to_bool, help='Is priositized experience replay beeing used?')
 parser.add_argument('-memory_size', default=10000, type=int, help="Replay memory size (This code uses sum tree, not deque)")
+parser.add_argument('-prioritized_type', default='rank', help='rank or proportional')
 parser.add_argument('-per_e', default=0.01, type=float, help='Hyperparameter that we use to avoid some experiences to have 0 probability of being taken')
 parser.add_argument('-per_a', default=0.6, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly')
 parser.add_argument('-per_b', default=0.4, type=float, help='Importance-sampling, from initial value increasing to 1')
+parser.add_argument('-per_b_annealing', type=float, help='Beta deacay from per_b to 1.0')
+
 
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
 parser.add_argument('-n_sequence', default=4, type=int, help='How many stacked states will be passed to encoder')

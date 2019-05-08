@@ -75,6 +75,7 @@ class Memory:
         self.per_e = args.per_e  
         self.per_a = args.per_a 
         self.per_b = args.per_b
+        self.per_b_annealing = args.per_b_annealing
 
     def _getPriority(self, error):
         e = (error + self.per_e) ** self.per_a
@@ -101,7 +102,7 @@ class Memory:
         segment = self.tree.total() / n
         
         if math.isnan(self.tree.total()):
-            x = 0
+            x = 0 # Testing purpose
 
         for i in range(n):
             a = segment * i
@@ -117,7 +118,7 @@ class Memory:
         importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.per_b)
         importance_sampling_weight /= importance_sampling_weight.max()
 
-        # state_t = torch.stack([x[0] for x in batch])
+        self.per_b = np.min([1., self.per_b + self.per_b_annealing])
 
         return batch, np.array(idx_arr), importance_sampling_weight
 

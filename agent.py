@@ -117,7 +117,7 @@ class Agent(nn.Module):
                 os._exit(1)
 
             if args.encoder_type == 'nothing':
-                logging.critical("Encoder type cant be 'nothing' if curiosity enabled, change the type")
+                logging.critical("Encoder type cant be 'nothing' if curiosity enabled, change is_curiosity to false")
                 os._exit(1)
             
             if args.encoder_type == 'conv':
@@ -134,6 +134,12 @@ class Agent(nn.Module):
             if args.debug_activations and len(args.debug_activations[0].split()) != 3:
                 logging.critical('debug_activations len(args) != 3, check help for formatting')
                 os._exit(0)
+
+        if args.prioritized_type == 'proportional':
+            if args.per_b_annealing == None:
+                logging.critical('prioritized_type is proportional but per_b_annealing hasnt been set')
+                os._exit(0)
+
 
     def normalize_state(self, x):
         d = 2.*(x - self.state_min_val/self.state_max_val) - 1
@@ -184,7 +190,7 @@ class Agent(nn.Module):
 
         state_t = torch.FloatTensor(state).to(self.args.device)
 
-        if self.args.encoder_type == 'conv': 
+        if self.args.encoder_type != 'nothing': 
             state_t = self.get_next_sequence(state_t)
         
         self.current_state = state_t
@@ -236,7 +242,7 @@ class Agent(nn.Module):
         next_state_t = torch.FloatTensor(next_state).to(self.args.device)
         reward_t = torch.FloatTensor([reward]).to(self.args.device)
 
-        if self.args.encoder_type == 'conv':
+        if self.args.encoder_type != 'nothing':
             next_state_t = self.get_next_sequence(next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
@@ -405,7 +411,7 @@ class Agent(nn.Module):
 
         loss_inv = recorded_action_t * torch.log(pred_action)
         loss_inverse = - loss_inv.mean()
-        
+
         mse = nn.MSELoss()
         #loss_inverse = mse(pred_action, recorded_action_t)
 
