@@ -11,7 +11,7 @@ import random, gym, os, cv2, time, logging
 from gym import envs
 import numpy as np
 from collections import deque
-from sum_tree import SumTree, Memory
+from memory import Memory
 
 from collections import deque
 from model_builder import FeatureExtractor, ModelBuilder
@@ -140,6 +140,10 @@ class Agent(nn.Module):
                 logging.critical('prioritized_type is proportional but per_b_annealing hasnt been set')
                 os._exit(0)
 
+        if args.memory_size < args.batch_size:
+            logging.critical('Memory size has to be larger than batch size')
+            os._exit(0)
+
 
     def normalize_state(self, x):
         d = 2.*(x - self.state_min_val/self.state_max_val) - 1
@@ -256,7 +260,7 @@ class Agent(nn.Module):
         self.update_target()
 
         # Pre populate memory before replay
-        if self.memory.get_entries() > self.args.batch_size:
+        if self.memory.size() == 1000:#>= self.args.batch_size:
             self.replay()
 
         self.total_steps += 1
@@ -332,7 +336,7 @@ class Agent(nn.Module):
     def update_priority(self, td_errors, idxs):
         for i in range(self.args.batch_size):
             idx = idxs[i]
-            self.memory.update(idx, td_errors[i]) 
+            self.memory.update(td_errors[i], idx) 
         
     def update_target(self):
         if self.args.is_ddqn:
@@ -345,6 +349,9 @@ class Agent(nn.Module):
             dqn_loss = self.loss_dqn[-1] if self.loss_dqn else 0
             ers = sum(self.e_reward)
             info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f}"
+
+            if self.args.prioritized_type == 'proportional':
+                info += f' | per_b: {self.memory.mem.per_b:.2f}'
                 
             if self.args.is_curiosity:
                 curious_info = f"   |   n_steps: {self.total_steps}   |   mem: {self.memory.get_entries()}   |   com: {self.loss_combined[-1]:.4f}    |    inv: {self.loss_inverse[-1]:.4f}   |   cos: {self.cos_distance[-1]:.4f}"
@@ -395,7 +402,7 @@ class Agent(nn.Module):
         loss_dqn = mse(Q_cur_t, Q_next_t)
 
         # # PER
-        if self.args.is_prioritized:
+        if self.args.prioritized_type != 'random':
             loss_dqn = (torch.FloatTensor(importance_sampling_weight).to(self.args.device) * loss_dqn)
 
             td_errors = torch.abs(Q_next_t - Q_cur_t)
