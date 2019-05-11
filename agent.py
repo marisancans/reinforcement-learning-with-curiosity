@@ -135,9 +135,14 @@ class Agent(nn.Module):
                 logging.critical('debug_activations len(args) != 3, check help for formatting')
                 os._exit(0)
 
-        if args.prioritized_type == 'proportional':
+        if args.prioritized_type != 'random':
             if args.per_b_annealing == None:
                 logging.critical('prioritized_type is proportional but per_b_annealing hasnt been set')
+                os._exit(0)
+
+        if args.prioritized_type == 'rank':
+            if not args.rank_update:
+                logging.critical('prioritized_type is rank, but rank_update hasnt been set')
                 os._exit(0)
 
         if args.memory_size < args.batch_size:
@@ -236,6 +241,9 @@ class Agent(nn.Module):
 
         if is_terminal:
             self.terminal_episode()
+
+        # if self.current_episode > 200:
+            # self.env.render() 
         
         return is_terminal
 
@@ -260,7 +268,7 @@ class Agent(nn.Module):
         self.update_target()
 
         # Pre populate memory before replay
-        if self.memory.size() == 1000:#>= self.args.batch_size:
+        if self.memory.size() >= self.args.batch_size * 2:
             self.replay()
 
         self.total_steps += 1
@@ -332,12 +340,7 @@ class Agent(nn.Module):
         if self.epsilon > self.args.epsilon_floor:
             self.epsilon -= self.args.epsilon_decay
    
-    # ====     AGENT INTERNAL STATE    =====
-    def update_priority(self, td_errors, idxs):
-        for i in range(self.args.batch_size):
-            idx = idxs[i]
-            self.memory.update(td_errors[i], idx) 
-        
+    # ====     AGENT INTERNAL STATE    =====       
     def update_target(self):
         if self.args.is_ddqn:
             if self.total_steps % self.args.target_update == 0:
@@ -348,13 +351,13 @@ class Agent(nn.Module):
         if self.args.debug:
             dqn_loss = self.loss_dqn[-1] if self.loss_dqn else 0
             ers = sum(self.e_reward)
-            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f}"
+            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} | mem: {self.memory.size()}"
 
-            if self.args.prioritized_type == 'proportional':
+            if self.args.prioritized_type != 'random':
                 info += f' | per_b: {self.memory.mem.per_b:.2f}'
                 
             if self.args.is_curiosity:
-                curious_info = f"   |   n_steps: {self.total_steps}   |   mem: {self.memory.get_entries()}   |   com: {self.loss_combined[-1]:.4f}    |    inv: {self.loss_inverse[-1]:.4f}   |   cos: {self.cos_distance[-1]:.4f}"
+                curious_info = f" | n_steps: {self.total_steps} | com: {self.loss_combined[-1]:.4f} | inv: {self.loss_inverse[-1]:.4f} | cos: {self.cos_distance[-1]:.4f}"
                 info += curious_info
 
             return info
@@ -406,7 +409,7 @@ class Agent(nn.Module):
             loss_dqn = (torch.FloatTensor(importance_sampling_weight).to(self.args.device) * loss_dqn)
 
             td_errors = torch.abs(Q_next_t - Q_cur_t)
-            self.update_priority(to_numpy(td_errors), idxs)
+            self.memory.update(to_numpy(td_errors), idxs) 
 
         return loss_dqn
 

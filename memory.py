@@ -2,7 +2,7 @@ import numpy as np
 from collections import deque
 import matplotlib.pyplot as plt
 
-import random, math, torch, heapq
+import random, math, torch
 from abc import ABC, abstractmethod
 
 class SumTree:
@@ -127,81 +127,121 @@ class ProportionalReplay(AbstractReplay):
 
         return batch, np.array(idx_arr), importance_sampling_weight
 
-    def update(self, error, idx):
-        p = self._getPriority(error)
-        self.tree.update(idx, p)
+    def update(self, errors, idxs):
+        for e, i in zip(errors, idxs):
+            p = self._getPriority(e)
+            self.tree.update(i, p)
+        
+        
 
-# Uses min binary heap
-# States are stored in list, heap operates only with indexes so that values arent copied when using heapsort()
 class RankReplay(AbstractReplay):
     def __init__(self, args):
-        self.new_elem_error = -1.0 # has to be negative, because min heap is used 
-        self.per_a = args.per_a
+        self.new_priority_score = 1.0 
+        self.rank_update = args.rank_update
         self.memory_size = args.memory_size
+
+        self.per_a = args.per_a
+        self.per_b = args.per_b
+        self.per_b_annealing = args.per_b_annealing
+       
         self.id_to_state = {}
-        self.heap = []
-        self.counter = 0 # Counts how many items have been inserted into heap, used as secondary key
+        self.buffer = []
+        self.seg = [] # Holds idxs from where to sample transitions
+
+        self.counter = 0 # Mapping to dict
+        self.steps = 0
+        
         
     def size(self):
-        return len(self.heap)
+        return len(self.buffer)
 
     def add(self, transition):
-        priority = round(np.random.uniform(0.0, 1.0), 2)
-        t = (priority, self.counter)
+        # priority = -round(np.random.uniform(0.0, 1.0), 2)
         self.id_to_state[self.counter] = transition
-
-        # Check if heap if full, if so, smallest priority will be replaced
-        if len(self.heap) < self.memory_size:
-            heapq.heappush(self.heap, t)
-        else:
-            spilled_value = heapq.heappushpop(self.heap, t) # TODO ------ REMOVE OLD VALUES FROM id_to_state
-
+        self.buffer.append((self.new_priority_score, self.counter))
         self.counter += 1
 
-            
-    def heapsort(self):
-        return [heapq.heappop(self.heap) for _ in range(len(self.heap))]
+    # From: https://github.com/Wanwannodao/DeepLearning/blob/master/RL/DDQN-PR/pr.py
+    def findSegments(self, batch_size):
+        n = len(self.buffer)
 
- 
-    def get_batch(self, k):
-        x = heapq.heappop(self.heap)
-        x = self.heapsort()
-
-        n = len(x)
-
-        dist = np.asarray([(1.0/(i))**self.per_a for i in range(1, n)], dtype=np.float32)
+        dist = np.asarray([(1.0/i)**self.per_a for i in range(1, n)], dtype=np.float32)
         self.p_n = np.sum(dist)
         dist = dist / self.p_n
 
-        # for IS weights
-        self.p_n = self.p_n / n
-
-        # cumulative distibution
         cdf = np.cumsum(dist)
 
-        unit = (1.0 - cdf[0])/k
-        # comprehension is faster
-        self.seg = [ np.searchsorted(cdf, cdf[0]+unit*i) for i in range(k) ]
+        unit = (1.0 - cdf[0])/(batch_size + 1)
+        self.seg = [ np.searchsorted(cdf, cdf[0]+unit*i) for i in range(batch_size + 1) ]
 
-        # # searchsorted only works on ascending, so we need to reverse
-        # segments = []
-        # for s in range(1, n):
-        #     idx = d.size - np.searchsorted(d[::-1], step * s, side = "right")
-        #     segments.append(idx)
-        # segments = [ for s in range(n)]
+    def remove_overfill(self, r):
+        keys = [self.buffer[i][1] for i in range(r)]
+        del self.buffer[0:r]
 
-        d = [i[0] for i in x]
+        for k in keys:
+            del self.id_to_state[k]
+
+   # Stratified sampling
+    def get_batch(self, batch_size):
+        n = len(self.buffer)
+
+        # These two needs optimization
+        if self.steps % self.rank_update == 0:
+            self.buffer.sort() # Sorts by priority
+
+            # Remove low priority overfilled items after sorting
+            r = len(self.buffer) - self.memory_size
+            if r > 1:
+                self.remove_overfill(r)
+                
+            self.findSegments(batch_size) # Has to be every n steps
+
+                
+        
+        h_indices=[]
+        for i in range(batch_size):
+            if self.seg[i] != self.seg[i+1]:
+                x = np.random.randint(self.seg[i], self.seg[i+1])
+            else:
+                x = self.seg[i]
+            h_indices.append(x)
+
+
+        batch = [ self.id_to_state[self.buffer[i][1]] for i in h_indices ]
+
+        # IS weights
+ 
+        self.p_n = self.p_n / n
+        ranks = np.power(np.array(h_indices) + 1, self.per_a)
+        #is_w = np.power(ranks * self.p_n, self.per_b)
+
+        is_w = np.power((ranks * n), -self.per_b)
+        is_w /= is_w.max()
+
+        self.per_b = np.min([1., self.per_b + self.per_b_annealing])
+        self.steps += 1
+
+        return batch, h_indices, is_w
+
+        # fig = plt.figure()
+        # ax1 = fig.add_subplot(221)
+        # ax2 = fig.add_subplot(222)
+
+        # ax1.set_title('p_i')
+        # ax2.set_title('cdf')
+
+        # plt.ylabel('Priority')
+        # plt.xlabel('Rank')
+        # for xc in self.seg:
+        #     plt.axvline(x=xc)
+
+        # plt.show()
 
         x = 1
-        plt.plot(d)
-        plt.ylabel('Priority')
-        plt.xlabel('Rank')
-        for xc in self.seg:
-            plt.axvline(x=xc)
-
-        plt.show()
-
-        x = 1
+    
+    def update(self, errors, idxs):
+        for e, i in zip(errors, idxs):
+            self.buffer[i] = (e, self.buffer[i][1])
 
 class RandomReplay(AbstractReplay):
     def __init__(self, args):
@@ -248,8 +288,8 @@ class Memory:
     def get_batch(self, n):
         return self.mem.get_batch(n)
 
-    def update(self, error, idx):
-        self.mem.update(error, idx)
+    def update(self, errors, idxs):
+        self.mem.update(errors, idxs)
 
     def size(self):
         return self.mem.size()

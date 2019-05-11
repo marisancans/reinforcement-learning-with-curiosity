@@ -37,6 +37,7 @@ parser.add_argument('-n_frames', default=9999, type=int, help='Number of frames 
 
 parser.add_argument('-memory_size', default=10000, type=int, help="Replay memory size (This code uses sum tree, not deque)")
 parser.add_argument('-prioritized_type', default='random', help='random / proportional / rank')
+parser.add_argument('-rank_update', type=int, help='After how many steps is memory sorted(only for rank prioritization)')
 parser.add_argument('-per_e', default=0.01, type=float, help='Hyperparameter that we use to avoid some experiences to have 0 probability of being taken')
 parser.add_argument('-per_a', default=0.6, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly')
 parser.add_argument('-per_b', default=0.4, type=float, help='Importance-sampling, from initial value increasing to 1')
@@ -207,7 +208,6 @@ def evaluate():
             is_done = agent.play_step()
                          
         t = time.time() - start
-
         
         state = agent.get_results()
         CsvUtils.add_results_local(args, state)
