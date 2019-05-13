@@ -56,21 +56,11 @@ parser.add_argument('-curiosity_lambda', default=-1.0, type=float, help='Lambda 
 parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
 
 parser.add_argument('-encoder_type', default='nothing', nargs='?', choices=['nothing', 'simple', 'conv'], help='Which type od encoder to use, depends on game state (default: %(default)s)')
-parser.add_argument('-simple_encoder_1_layer_out', default=5, type=int)
-parser.add_argument('-simple_encoder_2_layer_out', default=5, type=int)
-
+parser.add_argument('-simple_encoder_layers', type=int, nargs="+", help='How many outputs per each layer e.g. 256 64 32')
+parser.add_argument('-inverse_model_layers', type=int, nargs="+", help='How many outputs per each layer (will be times 2) e.g. 256 64 32')
+parser.add_argument('-forward_model_layers', type=int, nargs="+", help='How many outputs per each layer e.g. 256 64 32')
+parser.add_argument('-dqn_model_layers', type=int, nargs="+", help='How many outputs per each layer e.g. 256 64 32')
 parser.add_argument('-conv_encoder_layer_out', default=15, type=int,)
-
-parser.add_argument('-inverse_1_layer_out', default=30, type=int,)
-parser.add_argument('-inverse_2_layer_out', default=25, type=int,)
-
-parser.add_argument('-forward_1_layer_out', default=30, type=int)
-parser.add_argument('-forward_2_layer_out', default=20, type=int)
-
-parser.add_argument('-dqn_1_layer_out', default=15, type=int,)
-parser.add_argument('-dqn_2_layer_out', default=15, type=int,)
-parser.add_argument('-dqn_3_layer_out', default=10, type=int,)
-parser.add_argument('-dqn_4_layer_out', default=10, type=int,)
 
 parser.add_argument('-is_ddqn', type=arg_to_bool, default=False, help='Is double DQN enabled?')
 parser.add_argument('-target_update', default=10, type=int, help='Update target network after n steps')

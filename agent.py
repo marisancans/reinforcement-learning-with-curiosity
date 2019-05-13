@@ -57,12 +57,12 @@ class Agent(nn.Module):
         if self.args.encoder_type == 'conv':
             builder.encoder_output_size = self.feature_extractor.encoder_output_size
 
-        self.dqn_model = builder.build_dqn_model()
-        self.target_model = builder.build_dqn_model()
+        self.dqn_model = builder.build_dqn_model().to(self.args.device)
+        self.target_model = builder.build_dqn_model().to(self.args.device)
 
         if self.args.is_curiosity:
-            self.inverse_model = builder.build_inverse_model()
-            self.forward_model = builder.build_forward_model()
+            self.inverse_model = builder.build_inverse_model().to(self.args.device)
+            self.forward_model = builder.build_forward_model().to(self.args.device)
         logging.info('agent models ok')
 
         # --------   OPTIMIZER AND LOSS  ----
@@ -149,10 +149,10 @@ class Agent(nn.Module):
             logging.critical('Memory size has to be larger than batch size')
             os._exit(0)
 
-
+    # Normalize -1..1
     def normalize_state(self, x):
-        d = 2.*(x - self.state_min_val/self.state_max_val) - 1
-        return d
+        x = (x - self.state_min_val) / (self.state_max_val - self.state_min_val) 
+        return x
 
     # =======     IMAGE PROCESSING    ====
     def preproprocess_frame(self, frame):
@@ -193,11 +193,15 @@ class Agent(nn.Module):
     def reset_env(self):
         state = self.env.reset()
 
+        if self.args.is_normalized_state:
+            state = self.normalize_state(state)
+
         # If is image
         if len(state.shape) == 3:
             state = self.preproprocess_frame(state)
 
         state_t = torch.FloatTensor(state).to(self.args.device)
+
 
         if self.args.encoder_type != 'nothing': 
             state_t = self.get_next_sequence(state_t)
@@ -242,8 +246,8 @@ class Agent(nn.Module):
         if is_terminal:
             self.terminal_episode()
 
-        # if self.current_episode > 200:
-            # self.env.render() 
+        if self.current_episode > 500:
+            self.env.render() 
         
         return is_terminal
 
@@ -351,7 +355,7 @@ class Agent(nn.Module):
         if self.args.debug:
             dqn_loss = self.loss_dqn[-1] if self.loss_dqn else 0
             ers = sum(self.e_reward)
-            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} | mem: {self.memory.size()}"
+            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} s | mem: {self.memory.size()}"
 
             if self.args.prioritized_type != 'random':
                 info += f' | per_b: {self.memory.mem.per_b:.2f}'

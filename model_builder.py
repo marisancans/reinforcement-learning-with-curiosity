@@ -21,7 +21,7 @@ class ModelBuilder():
 
     def get_encoder_out(self):
         if self.args.encoder_type == 'simple':
-            in_features = self.args.simple_encoder_2_layer_out
+            in_features = self.args.simple_encoder_layers[-1]
         elif self.args.encoder_type == 'conv':
             in_features = self.encoder_output_size
         else:
@@ -29,35 +29,46 @@ class ModelBuilder():
         
         return in_features
 
+    def build_linear_relu(self, layers, first_layer_in, last_layer_out):
+        seq = nn.Sequential()
 
+        prev_layer_out = None
+
+        for idx, out in enumerate(layers):
+            in_features = first_layer_in if idx == 0 else prev_layer_out
+            out = last_layer_out if idx == len(layers) - 1 else out 
+
+            seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
+            seq.add_module(f"relu_{idx}", nn.ReLU())
+            prev_layer_out = out
+        
+        return seq
+        
+    # ======     DQN    ========
+     
     def build_dqn_model(self):
-
-        seq = torch.nn.Sequential(
-            nn.Linear(in_features=self.get_encoder_out(), out_features=self.args.dqn_1_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.dqn_1_layer_out, out_features=self.n_actions),
-        ).to(self.args.device)
+        layers = self.args.dqn_model_layers
+        seq = self.build_linear_relu(layers=layers, first_layer_in=self.get_encoder_out(), last_layer_out=self.n_actions)
 
         seq = init_parameters('dqn', seq)
         return seq
 
-    def build_inverse_model(self):
-        seq = torch.nn.Sequential(
-            nn.Linear(in_features=self.get_encoder_out() * 2, out_features=self.args.inverse_1_layer_out),
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.inverse_1_layer_out, out_features=self.n_actions),
-            nn.Softmax()
-        ).to(self.args.device)
+    # ======     INVERSE    ========
 
+    def build_inverse_model(self):
+        layers = [i * 2 for i in self.args.inverse_model_layers]
+        seq = self.build_linear_relu(layers=layers, first_layer_in=self.get_encoder_out() * 2, last_layer_out=self.n_actions)
+
+        seq.add_module("softmax", nn.Softmax())      
         seq = init_parameters('inverse', seq)
+
         return seq
 
+    # ======     FORWARD    ========
+
     def build_forward_model(self):
-        seq = torch.nn.Sequential(
-            nn.Linear(in_features=self.get_encoder_out() + self.n_actions, out_features=self.args.forward_1_layer_out), # input actions are one hot encoded
-            nn.ReLU(),
-            nn.Linear(in_features=self.args.forward_1_layer_out, out_features=self.get_encoder_out()),
-        ).to(self.args.device)
+        layers = self.args.forward_model_layers
+        seq = self.build_linear_relu(layers=layers, first_layer_in=self.get_encoder_out() + self.n_actions, last_layer_out=self.get_encoder_out())
         
         seq = init_parameters('forward', seq)
         return seq
@@ -167,25 +178,28 @@ class SimpleEncoderModule(nn.Module):
     def __init__(self, args, n_states):
         super(SimpleEncoderModule, self).__init__()
 
-        self.linear_1 = nn.Linear(in_features=n_states, out_features=args.simple_encoder_1_layer_out)
-        self.relu_1 = nn.LeakyReLU()
-        self.linear_2 = nn.Linear(in_features=args.simple_encoder_1_layer_out, out_features=args.simple_encoder_2_layer_out)
-        self.tanh_1 = nn.Tanh()
+        self.seq = nn.Sequential()
+
+        prev_layer_out = None
+        for idx, out in enumerate(args.simple_encoder_layers):
+            in_features = n_states if idx == 0 else prev_layer_out
+            self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
+            self.seq.add_module(f"relu_{idx}", nn.ReLU())
+            prev_layer_out = out
+
+        self.seq.add_module("tanh", nn.Tanh())  
 
         init_parameters('simple', self)
 
     def forward(self, x):
-        x1 = self.linear_1(x)
-        x2 = self.relu_1(x1)
-        x3 = self.linear_2(x2)
-        x4 = self.tanh_1(x3)
-        embedding = x4
+        embedding = self.seq(x)
 
         # L2 normalization
-        norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
-        output_norm = embedding / norm
+        # norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
+        # if torch.sum(norm) != 0:
+        #     embedding = embedding / norm
         
-        return output_norm
+        return embedding
 
 
 # =======           FEATURE EXTRACTOR       =========
@@ -200,13 +214,13 @@ class FeatureExtractor():
             channels = 1 if args.is_grayscale else 3
             self.encoder = ConvEncoderModule(args, channels).to(args.device)
         else:
-            self.encoder = SimpleEncoderModule(args, n_states).to(self.args.device)
+            self.encoder = SimpleEncoderModule(args, n_states).to(args.device)
                
         # Input size to RNN is output size from encoders or state size 
         if args.encoder_type == 'conv':
             self.encoder_output_size = self.encoder.out_size
         else:
-            self.encoder_output_size = self.args.simple_encoder_2_layer_out
+            self.encoder_output_size = self.args.simple_encoder_layers[-1]
 
         self.fc_hidden_size = self.encoder_output_size # This is blind guess
 
