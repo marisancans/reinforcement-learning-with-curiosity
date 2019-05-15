@@ -135,11 +135,6 @@ class Agent(nn.Module):
                 logging.critical('debug_activations len(args) != 3, check help for formatting')
                 os._exit(0)
 
-        if args.prioritized_type != 'random':
-            if args.per_b_annealing == None:
-                logging.critical('prioritized_type is proportional but per_b_annealing hasnt been set')
-                os._exit(0)
-
         if args.prioritized_type == 'rank':
             if not args.rank_update:
                 logging.critical('prioritized_type is rank, but rank_update hasnt been set')
@@ -245,6 +240,7 @@ class Agent(nn.Module):
 
         if is_terminal:
             self.terminal_episode()
+            self.memory.beta_anneal()
 
         if self.current_episode > 500:
             self.env.render() 
