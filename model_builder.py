@@ -21,7 +21,7 @@ class ModelBuilder():
 
     def get_encoder_out(self):
         if self.args.encoder_type == 'simple':
-            in_features = self.args.simple_encoder_layers[-1]
+            in_features = self.args.models_layer_features
         elif self.args.encoder_type == 'conv':
             in_features = self.encoder_output_size
         else:
@@ -29,14 +29,20 @@ class ModelBuilder():
         
         return in_features
 
-    def build_linear_relu(self, layers, first_layer_in, last_layer_out):
+    def build_linear_relu(self, first_layer_in, last_layer_out):
         seq = nn.Sequential()
 
         prev_layer_out = None
+        out = self.args.models_layer_features
 
-        for idx, out in enumerate(layers):
-            in_features = first_layer_in if idx == 0 else prev_layer_out
-            out = last_layer_out if idx == len(layers) - 1 else out 
+        for idx in range(self.args.models_layer_count):
+            if idx == 0:
+                in_features = first_layer_in
+            else:
+                in_features = prev_layer_out
+
+            if idx == self.args.models_layer_count - 1:
+                out = last_layer_out 
 
             seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
             seq.add_module(f"relu_{idx}", nn.ReLU())
@@ -47,8 +53,7 @@ class ModelBuilder():
     # ======     DQN    ========
      
     def build_dqn_model(self):
-        layers = self.args.dqn_model_layers
-        seq = self.build_linear_relu(layers=layers, first_layer_in=self.get_encoder_out(), last_layer_out=self.n_actions)
+        seq = self.build_linear_relu(first_layer_in=self.get_encoder_out(), last_layer_out=self.n_actions)
 
         seq = init_parameters('dqn', seq)
         return seq
@@ -56,8 +61,7 @@ class ModelBuilder():
     # ======     INVERSE    ========
 
     def build_inverse_model(self):
-        layers = [i * 2 for i in self.args.inverse_model_layers]
-        seq = self.build_linear_relu(layers=layers, first_layer_in=self.get_encoder_out() * 2, last_layer_out=self.n_actions)
+        seq = self.build_linear_relu(first_layer_in=self.get_encoder_out() * 2, last_layer_out=self.n_actions)
 
         seq.add_module("softmax", nn.Softmax(dim=1))
         seq = init_parameters('inverse', seq)
@@ -67,8 +71,7 @@ class ModelBuilder():
     # ======     FORWARD    ========
 
     def build_forward_model(self):
-        layers = self.args.forward_model_layers
-        seq = self.build_linear_relu(layers=layers, first_layer_in=self.get_encoder_out() + self.n_actions, last_layer_out=self.get_encoder_out())
+        seq = self.build_linear_relu(first_layer_in=self.get_encoder_out() + self.n_actions, last_layer_out=self.get_encoder_out())
         
         seq = init_parameters('forward', seq)
         return seq
@@ -181,11 +184,18 @@ class SimpleEncoderModule(nn.Module):
         self.seq = nn.Sequential()
 
         prev_layer_out = None
-        for idx, out in enumerate(args.simple_encoder_layers):
-            in_features = n_states if idx == 0 else prev_layer_out
+        out = args.models_layer_features
+
+        for idx in range(args.models_layer_count):
+            if idx == 0:
+                in_features = n_states
+            else:
+                in_features = prev_layer_out
+            
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
             self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
-            if idx == len(args.simple_encoder_layers) - 1:
+            
+            if idx == args.models_layer_count - 1:
                 self.seq.add_module("tanh", nn.Tanh())
             else:
                 self.seq.add_module(f"relu_{idx}", nn.ReLU())
@@ -233,7 +243,7 @@ class FeatureExtractor():
         if args.encoder_type == 'conv':
             self.encoder_output_size = self.encoder.out_size
         else:
-            self.encoder_output_size = self.args.simple_encoder_layers[-1]
+            self.encoder_output_size = self.args.models_layer_features
 
         self.fc_hidden_size = self.encoder_output_size # This is blind guess
 
