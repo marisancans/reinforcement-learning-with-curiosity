@@ -146,7 +146,8 @@ class Agent(nn.Module):
 
     # Normalize -1..1
     def normalize_state(self, x):
-        x = (x - self.state_min_val) / (self.state_max_val - self.state_min_val) 
+        if self.state_max_val != self.state_min_val:
+            x = (x - self.state_min_val) / (self.state_max_val - self.state_min_val)
         return x
 
     # =======     IMAGE PROCESSING    ====
@@ -419,11 +420,7 @@ class Agent(nn.Module):
         trans = torch.cat((state_t, next_state_t), dim=1)
         pred_action = self.inverse_model(trans)
 
-        loss_inv = recorded_action_t * torch.log(pred_action)
-        loss_inverse = - loss_inv.mean()
-
-        mse = nn.MSELoss()
-        #loss_inverse = mse(pred_action, recorded_action_t)
+        loss_inverse = -torch.mean(recorded_action_t * torch.log(pred_action))
 
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
         cat_t = torch.cat((state_t, recorded_action_t), dim=1)

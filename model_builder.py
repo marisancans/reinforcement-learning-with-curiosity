@@ -59,7 +59,7 @@ class ModelBuilder():
         layers = [i * 2 for i in self.args.inverse_model_layers]
         seq = self.build_linear_relu(layers=layers, first_layer_in=self.get_encoder_out() * 2, last_layer_out=self.n_actions)
 
-        seq.add_module("softmax", nn.Softmax())      
+        seq.add_module("softmax", nn.Softmax(dim=1))
         seq = init_parameters('inverse', seq)
 
         return seq
@@ -184,15 +184,28 @@ class SimpleEncoderModule(nn.Module):
         for idx, out in enumerate(args.simple_encoder_layers):
             in_features = n_states if idx == 0 else prev_layer_out
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
-            self.seq.add_module(f"relu_{idx}", nn.ReLU())
+            self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
+            if idx == len(args.simple_encoder_layers) - 1:
+                self.seq.add_module("tanh", nn.Tanh())
+            else:
+                self.seq.add_module(f"relu_{idx}", nn.ReLU())
             prev_layer_out = out
-
-        self.seq.add_module("tanh", nn.Tanh())  
 
         init_parameters('simple', self)
 
     def forward(self, x):
-        embedding = self.seq(x)
+        x = x.squeeze(dim=0)
+
+        if x.size(0) == 1: # if seq == 1 only single sample
+            out = x
+            for name, func in self.seq.named_children():
+                if "_bn" not in name:
+                    out = func(out)
+            embedding = out
+        else:
+            embedding = self.seq(x)
+
+        embedding = embedding.unsqueeze(dim=0)
 
         # L2 normalization
         # norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
@@ -232,8 +245,9 @@ class FeatureExtractor():
         ).to(self.args.device)
 
     def reset_hidden(self, batch_size):
-        self.hidden_rnn = torch.zeros(self.len_layers_rnn, batch_size, self.fc_hidden_size).to(self.args.device)
-        self.state_rnn = torch.zeros(self.len_layers_rnn, batch_size, self.fc_hidden_size).to(self.args.device)
+        # (num_layers * num_directions, batch, hidden_size)
+        self.hidden_rnn = torch.zeros(self.layer_rnn.num_layers, batch_size, self.fc_hidden_size).to(self.args.device)
+        self.state_rnn = torch.zeros(self.layer_rnn.num_layers, batch_size, self.fc_hidden_size).to(self.args.device)
 
     def extract_features(self, sequece_t, seq_lengths):
         batch_size = sequece_t.shape[0]
