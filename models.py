@@ -8,95 +8,107 @@ from modules.torch_utils import init_parameters
 import random, re
 import numpy as np
 
-def build_linear_relu(args, first_layer_in, last_layer_out, last_layer_activation='relu'):
+def build_linear_relu(feature_count, layer_count, first_layer_in, last_layer_out):
     seq = nn.Sequential()
 
     prev_layer_out = None
-    out = args.models_layer_features
+    out = feature_count
 
-    for idx in range(args.models_layer_count):
+    for idx in range(layer_count):
         if idx == 0:
             in_features = first_layer_in
         else:
             in_features = prev_layer_out
 
-        if idx == args.models_layer_count - 1:
+        if idx == layer_count - 1:
             out = last_layer_out 
 
         seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
 
-        if idx == args.models_layer_count - 1 and last_layer_activation == 'softmax':
-            seq.add_module(f"softmax_{idx}", nn.Softmax(dim=1))
-        else:
+        if idx < layer_count - 1:
             seq.add_module(f"relu_{idx}", nn.ReLU())
-        
+            
         prev_layer_out = out
     
     return seq
 
-
-
 # ======     DQN    ===========
 class DQN_model(nn.Module):
-    def __init__(self, args, first_layer_in, last_layer_out):
+    def __init__(self, feature_count, layer_count, first_layer_in, last_layer_out):
         super(DQN_model, self).__init__()
 
-        self.seq = build_linear_relu(args, first_layer_in, last_layer_out)
-        init_parameters('dqn', self.seq)
+        self.seq = build_linear_relu(feature_count, layer_count, first_layer_in, last_layer_out)
+        init_parameters('dqn', self)
 
     def forward(self, x):
         out = self.seq(x)
         return out
 
-# ======     INVERSE    ========
+# ======     INVERSE    ===========
 class Inverse_model(nn.Module):
-    def __init__(self, args, first_layer_in, last_layer_out):
+    def __init__(self, feature_count, layer_count, first_layer_in, last_layer_out):
         super(Inverse_model, self).__init__()
 
-        self.seq = build_linear_relu(args, first_layer_in, last_layer_out)
-        init_parameters('inverse', self.seq)
+        self.seq = build_linear_relu(feature_count, layer_count, first_layer_in, last_layer_out)
+        init_parameters('inverse', self)
 
     def forward(self, x):
         out = self.seq(x)
+        out = torch.nn.functional.softmax(out, dim=1)
         return out
 
-
-# ======     FORWARD    ========
+# ======     FORWARD    ===========
 class Forward_model(nn.Module):
-    def __init__(self, args, first_layer_in, last_layer_out):
+    def __init__(self, feature_count, layer_count, first_layer_in, last_layer_out):
         super(Forward_model, self).__init__()
 
-        self.seq = build_linear_relu(args, first_layer_in,last_layer_out, last_layer_activation='softmax')
-        init_parameters('forward', self.seq)
+        self.seq = build_linear_relu(feature_count, layer_count, first_layer_in, last_layer_out)
+        init_parameters('forward', self)
 
     def forward(self, x):
         out = self.seq(x)
         return out
 
-    # def get_encoder_out(self):
-    #     if self.args.encoder_type == 'simple':
-    #         in_features = self.args.models_layer_features
-    #     elif self.args.encoder_type == 'conv':
-    #         in_features = self.encoder_output_size
-    #     else:
-    #         in_features = self.n_states
+# =======           MODEL  BUILDER       =========
+
+class ModelBuilder():
+    def __init__(self, args, n_states, n_actions):
+        self.args = args
+        self.n_states = n_states
+        self.n_actions = n_actions
+        self.encoder_output_size = 0
+
+    def get_encoder_out(self):
+        if self.args.encoder_type == 'simple':
+            in_features = self.args.simple_encoder_layers[-1]
+        elif self.args.encoder_type == 'conv':
+            in_features = self.encoder_output_size
+        else:
+            in_features = self.n_states
         
-    #     return in_features
+        return in_features
 
+    def build_dqn_model(self):
+        return DQN_model(feature_count=self.args.models_layer_features,
+                         layer_count=self.args.models_layer_count,
+                         first_layer_in=self.get_encoder_out(), 
+                         last_layer_out=self.n_actions
+                         ).to(self.args.device)
 
-        
-
-
-
-    # ======     FORWARD    ========
+    def build_inverse_model(self):
+        return Inverse_model(feature_count=self.args.models_layer_features,
+                             layer_count=self.args.models_layer_count,
+                             first_layer_in=self.get_encoder_out() * 2,
+                             last_layer_out=self.n_actions
+                             ).to(self.args.device)
 
     def build_forward_model(self):
-        seq = self.build_linear_relu(first_layer_in=self.get_encoder_out() + self.n_actions, last_layer_out=self.get_encoder_out())
+        return Forward_model(feature_count=self.args.models_layer_features,
+                             layer_count=self.args.models_layer_count,
+                             first_layer_in=self.get_encoder_out() + self.n_actions,
+                             last_layer_out=self.get_encoder_out()
+                            ).to(self.args.device)
         
-        seq = init_parameters('forward', seq)
-        return seq
-
-
 # =======           CONV  MODEL       =========
 
 class Hook():
@@ -204,9 +216,8 @@ class SimpleEncoderModule(nn.Module):
         self.seq = nn.Sequential()
 
         prev_layer_out = None
-        out = args.models_layer_features
 
-        for idx in range(args.models_layer_count):
+        for idx, out in enumerate(args.simple_encoder_layers):
             if idx == 0:
                 in_features = n_states
             else:
@@ -215,10 +226,9 @@ class SimpleEncoderModule(nn.Module):
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
             self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
             
-            if idx == args.models_layer_count - 1:
-                self.seq.add_module("tanh", nn.Tanh())
-            else:
+            if idx < args.models_layer_count - 1:
                 self.seq.add_module(f"relu_{idx}", nn.ReLU())
+            
             prev_layer_out = out
 
         init_parameters('simple', self)
@@ -235,14 +245,16 @@ class SimpleEncoderModule(nn.Module):
         else:
             embedding = self.seq(x)
 
+        embedding = nn.functional.tanh(embedding)
         embedding = embedding.unsqueeze(dim=0)
 
-        # L2 normalization
+        #L2 normalization
         # norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
         # if torch.sum(norm) != 0:
-        #     embedding = embedding / norm
+            # embedding = embedding / norm
         
         return embedding
+
 
 
 # =======           FEATURE EXTRACTOR       =========
@@ -257,23 +269,26 @@ class FeatureExtractor():
             channels = 1 if args.is_grayscale else 3
             self.encoder = ConvEncoderModule(args, channels).to(args.device)
         else:
-            self.encoder = SimpleEncoderModule(args, n_states).to(args.device)
+            self.encoder = SimpleEncoderModule(args, n_states).to(self.args.device)
                
         # Input size to RNN is output size from encoders or state size 
-        encoder_output_size = args.models_layer_features
-        self.fc_hidden_size = encoder_output_size # This is blind guess
+        if args.encoder_type == 'conv':
+            self.encoder_output_size = self.encoder.out_size
+        else:
+            self.encoder_output_size = self.args.simple_encoder_layers[-1]
+
+        self.fc_hidden_size = self.encoder_output_size # This is blind guess
 
         self.layer_rnn = torch.nn.LSTM(
-            input_size=encoder_output_size,
+            input_size=self.encoder_output_size,
             hidden_size=self.fc_hidden_size,
             num_layers=self.len_layers_rnn,
             batch_first=True
         ).to(self.args.device)
 
     def reset_hidden(self, batch_size):
-        # (num_layers * num_directions, batch, hidden_size)
-        self.hidden_rnn = torch.zeros(self.layer_rnn.num_layers, batch_size, self.fc_hidden_size).to(self.args.device)
-        self.state_rnn = torch.zeros(self.layer_rnn.num_layers, batch_size, self.fc_hidden_size).to(self.args.device)
+        self.hidden_rnn = torch.zeros(self.len_layers_rnn, batch_size, self.fc_hidden_size).to(self.args.device)
+        self.state_rnn = torch.zeros(self.len_layers_rnn, batch_size, self.fc_hidden_size).to(self.args.device)
 
     def extract_features(self, sequece_t, seq_lengths):
         batch_size = sequece_t.shape[0]
@@ -330,4 +345,3 @@ class FeatureExtractor():
 #         x = self.deconv_2.forward(x)
 #         x = F.sigmoid(x)
 #         return x
-

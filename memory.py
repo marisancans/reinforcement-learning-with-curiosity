@@ -76,10 +76,6 @@ class AbstractReplay(ABC):
     def get_batch(self, n):
         pass
 
-    @abstractmethod
-    def beta_anneal(self):
-        pass
-
     
 
 # Uses sum tree
@@ -88,13 +84,10 @@ class ProportionalReplay(AbstractReplay):
         self.per_e = args.per_e  
         self.per_a = args.per_a 
         self.per_b = args.per_b
-        self.per_b_step = (1 - args.per_b) / args.n_episodes
+        self.per_b_annealing = args.per_b_annealing
 
         self.tree = SumTree(args.memory_size)
         self.new_elem_error = 10000
-
-    def beta_anneal(self):
-        self.per_b = np.min([1., self.per_b + self.per_b_step])      
 
     def _getPriority(self, error):
         e = (error + self.per_e) ** self.per_a
@@ -130,7 +123,7 @@ class ProportionalReplay(AbstractReplay):
         importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.per_b)
         importance_sampling_weight /= importance_sampling_weight.max()
 
-        self.per_b = np.min([1., self.per_b + self.per_b_step])
+        self.per_b = np.min([1., self.per_b + self.per_b_annealing])
 
         return batch, np.array(idx_arr), importance_sampling_weight
 
@@ -149,7 +142,7 @@ class RankReplay(AbstractReplay):
 
         self.per_a = args.per_a
         self.per_b = args.per_b
-        self.per_b_step = (1 - args.per_b) / args.n_episodes
+        self.per_b_annealing = args.per_b_annealing
        
         self.id_to_state = {}
         self.buffer = []
@@ -157,9 +150,7 @@ class RankReplay(AbstractReplay):
 
         self.counter = 0 # Mapping to dict
         self.steps = 0
-
-    def beta_anneal(self):
-        self.per_b = np.min([1., self.per_b + self.per_b_step])        
+        
         
     def size(self):
         return len(self.buffer)
@@ -227,6 +218,7 @@ class RankReplay(AbstractReplay):
         is_w = np.power((ranks * n), -self.per_b)
         is_w /= is_w.max()
 
+        self.per_b = np.min([1., self.per_b + self.per_b_annealing])
         self.steps += 1
 
         return batch, h_indices, is_w
@@ -268,9 +260,6 @@ class RandomReplay(AbstractReplay):
 
         return batch, None, None
 
-    def beta_anneal(self):
-        pass
-
 
 
 #-------------------- MEMORY --------------------------
@@ -304,7 +293,4 @@ class Memory:
 
     def size(self):
         return self.mem.size()
-
-    def beta_anneal(self):
-        self.mem.beta_anneal()
     

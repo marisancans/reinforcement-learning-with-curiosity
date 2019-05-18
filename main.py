@@ -43,7 +43,6 @@ parser.add_argument('-per_a', default=0.6, type=float, help='Hyperparameter that
 parser.add_argument('-per_b', default=0.4, type=float, help='Importance-sampling, from initial value increasing to 1')
 parser.add_argument('-per_b_annealing', type=float, help='Beta increase step from per_b to 1.0')
 
-
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
 parser.add_argument('-n_sequence', default=4, type=int, help='How many stacked states will be passed to encoder')
 parser.add_argument('-n_frame_skip', default=1, type=int, help='How many frames to skip, before pushing to frame stack')
@@ -56,10 +55,9 @@ parser.add_argument('-curiosity_lambda', default=-1.0, type=float, help='Lambda 
 parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
 
 parser.add_argument('-encoder_type', default='nothing', nargs='?', choices=['nothing', 'simple', 'conv'], help='Which type od encoder to use, depends on game state (default: %(default)s)')
-#parser.add_argument('-simple_encoder_layers', type=int, nargs="+", help='How many outputs per each layer e.g. 256 64 32')
 parser.add_argument('-models_layer_count', type=int, help='Hidden layer count for inverse / forward / dqn / simple encoder models')
 parser.add_argument('-models_layer_features', type=int, help='Hidden layer FEATURE count for inverse / forward / dqn / simple encoder models')
-
+parser.add_argument('-simple_encoder_layers', type=int, nargs="+", help='How many outputs per each layer e.g. 256 64 32')
 parser.add_argument('-conv_encoder_layer_out', default=1024, type=int)
 
 parser.add_argument('-is_ddqn', type=arg_to_bool, default=False, help='Is double DQN enabled?')

@@ -14,7 +14,7 @@ from collections import deque
 from memory import Memory
 
 from collections import deque
-from models import FeatureExtractor, DQN_model, Inverse_model, Forward_model
+from models import FeatureExtractor, ModelBuilder, DQN_model
 
 def average(x):
     if not len(x):
@@ -42,8 +42,8 @@ class Agent(nn.Module):
         self.n_states = self.env.observation_space.shape[0]
         self.states_sequence = deque(maxlen=self.args.n_sequence)
 
-        self.state_max_val = self.env.observation_space.low
-        self.state_min_val = self.env.observation_space.high
+        self.state_max_val = self.env.observation_space.low.min()
+        self.state_min_val = self.env.observation_space.high.max()
         self.n_actions = self.env.action_space.n
         self.epsilon = 1.0
         logging.info('agent state ok')
@@ -52,27 +52,17 @@ class Agent(nn.Module):
         if self.args.encoder_type != 'nothing':
             self.feature_extractor = FeatureExtractor(self.args, self.n_states)
         
-        self.dqn_model = DQN_model(self.args, 
-                                   first_layer_in=self.args.models_layer_features, 
-                                   last_layer_out=self.n_actions
-                                   ).to(self.args.device)
+        builder = ModelBuilder(self.args, self.n_states, self.n_actions)
 
-        self.target_model = DQN_model(self.args, 
-                                      first_layer_in=self.args.models_layer_features, 
-                                      last_layer_out=self.n_states
-                                     ).to(self.args.device)
+        if self.args.encoder_type == 'conv':
+            builder.encoder_output_size = self.feature_extractor.encoder_output_size
+
+        self.dqn_model = builder.build_dqn_model()
+        self.target_model = builder.build_dqn_model()
 
         if self.args.is_curiosity:
-            self.inverse_model = Inverse_model(self.args, 
-                                               first_layer_in=self.args.models_layer_features * 2, 
-                                               last_layer_out=self.n_actions
-                                              ).to(self.args.device)
-
-            self.forward_model = Forward_model(self.args, 
-                                               first_layer_in=self.args.models_layer_features + self.n_actions,
-                                               last_layer_out=self.args.models_layer_features 
-                                              ).to(self.args.device)
-
+            self.inverse_model = builder.build_inverse_model()
+            self.forward_model = builder.build_forward_model()
         logging.info('agent models ok')
 
         # --------   OPTIMIZER AND LOSS  ----
@@ -145,6 +135,11 @@ class Agent(nn.Module):
                 logging.critical('debug_activations len(args) != 3, check help for formatting')
                 os._exit(0)
 
+        if args.prioritized_type != 'random':
+            if args.per_b_annealing == None:
+                logging.critical('prioritized_type is proportional but per_b_annealing hasnt been set')
+                os._exit(0)
+
         if args.prioritized_type == 'rank':
             if not args.rank_update:
                 logging.critical('prioritized_type is rank, but rank_update hasnt been set')
@@ -154,11 +149,13 @@ class Agent(nn.Module):
             logging.critical('Memory size has to be larger than batch size')
             os._exit(0)
 
+
     # Normalize -1..1
     def normalize_state(self, x):
         if not np.array_equal(self.state_max_val, self.state_min_val):
             x = (x - self.state_min_val) / (self.state_max_val - self.state_min_val)
         return x
+
 
     # =======     IMAGE PROCESSING    ====
     def preproprocess_frame(self, frame):
@@ -199,15 +196,11 @@ class Agent(nn.Module):
     def reset_env(self):
         state = self.env.reset()
 
-        if self.args.is_normalized_state:
-            state = self.normalize_state(state)
-
         # If is image
         if len(state.shape) == 3:
             state = self.preproprocess_frame(state)
 
         state_t = torch.FloatTensor(state).to(self.args.device)
-
 
         if self.args.encoder_type != 'nothing': 
             state_t = self.get_next_sequence(state_t)
@@ -251,10 +244,9 @@ class Agent(nn.Module):
 
         if is_terminal:
             self.terminal_episode()
-            self.memory.beta_anneal()
 
-        if self.current_episode > 500:
-            self.env.render() 
+        # if self.current_episode > 200:
+            # self.env.render() 
         
         return is_terminal
 
@@ -362,7 +354,7 @@ class Agent(nn.Module):
         if self.args.debug:
             dqn_loss = self.loss_dqn[-1] if self.loss_dqn else 0
             ers = sum(self.e_reward)
-            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} s | mem: {self.memory.size()}"
+            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} | mem: {self.memory.size()}"
 
             if self.args.prioritized_type != 'random':
                 info += f' | per_b: {self.memory.mem.per_b:.2f}'
