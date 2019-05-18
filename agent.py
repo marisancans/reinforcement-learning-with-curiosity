@@ -14,7 +14,7 @@ from collections import deque
 from memory import Memory
 
 from collections import deque
-from model_builder import FeatureExtractor, ModelBuilder
+from models import FeatureExtractor, DQN_model, Inverse_model, Forward_model
 
 def average(x):
     if not len(x):
@@ -42,8 +42,8 @@ class Agent(nn.Module):
         self.n_states = self.env.observation_space.shape[0]
         self.states_sequence = deque(maxlen=self.args.n_sequence)
 
-        self.state_max_val = self.env.observation_space.low.min()
-        self.state_min_val = self.env.observation_space.high.max()
+        self.state_max_val = self.env.observation_space.low
+        self.state_min_val = self.env.observation_space.high
         self.n_actions = self.env.action_space.n
         self.epsilon = 1.0
         logging.info('agent state ok')
@@ -52,17 +52,27 @@ class Agent(nn.Module):
         if self.args.encoder_type != 'nothing':
             self.feature_extractor = FeatureExtractor(self.args, self.n_states)
         
-        builder = ModelBuilder(self.args, self.n_states, self.n_actions)
+        self.dqn_model = DQN_model(self.args, 
+                                   first_layer_in=self.args.models_layer_features, 
+                                   last_layer_out=self.n_actions
+                                   ).to(self.args.device)
 
-        if self.args.encoder_type == 'conv':
-            builder.encoder_output_size = self.feature_extractor.encoder_output_size
-
-        self.dqn_model = builder.build_dqn_model().to(self.args.device)
-        self.target_model = builder.build_dqn_model().to(self.args.device)
+        self.target_model = DQN_model(self.args, 
+                                      first_layer_in=self.args.models_layer_features, 
+                                      last_layer_out=self.n_states
+                                     ).to(self.args.device)
 
         if self.args.is_curiosity:
-            self.inverse_model = builder.build_inverse_model().to(self.args.device)
-            self.forward_model = builder.build_forward_model().to(self.args.device)
+            self.inverse_model = Inverse_model(self.args, 
+                                               first_layer_in=self.args.models_layer_features * 2, 
+                                               last_layer_out=self.n_actions
+                                              ).to(self.args.device)
+
+            self.forward_model = Forward_model(self.args, 
+                                               first_layer_in=self.args.models_layer_features + self.n_actions,
+                                               last_layer_out=self.args.models_layer_features 
+                                              ).to(self.args.device)
+
         logging.info('agent models ok')
 
         # --------   OPTIMIZER AND LOSS  ----
@@ -146,7 +156,7 @@ class Agent(nn.Module):
 
     # Normalize -1..1
     def normalize_state(self, x):
-        if self.state_max_val != self.state_min_val:
+        if not np.array_equal(self.state_max_val, self.state_min_val):
             x = (x - self.state_min_val) / (self.state_max_val - self.state_min_val)
         return x
 
@@ -420,7 +430,7 @@ class Agent(nn.Module):
         trans = torch.cat((state_t, next_state_t), dim=1)
         pred_action = self.inverse_model(trans)
 
-        loss_inverse = -torch.mean(recorded_action_t * torch.log(pred_action))
+        loss_inverse = -torch.mean(recorded_action_t * torch.log(pred_action + 1e-12))
 
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
         cat_t = torch.cat((state_t, recorded_action_t), dim=1)

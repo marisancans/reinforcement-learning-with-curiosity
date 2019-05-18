@@ -8,65 +8,85 @@ from modules.torch_utils import init_parameters
 import random, re
 import numpy as np
 
+def build_linear_relu(args, first_layer_in, last_layer_out, last_layer_activation='relu'):
+    seq = nn.Sequential()
 
+    prev_layer_out = None
+    out = args.models_layer_features
 
-# =======           MODEL  BUILDER       =========
-
-class ModelBuilder():
-    def __init__(self, args, n_states, n_actions):
-        self.args = args
-        self.n_states = n_states
-        self.n_actions = n_actions
-        self.encoder_output_size = 0
-
-    def get_encoder_out(self):
-        if self.args.encoder_type == 'simple':
-            in_features = self.args.models_layer_features
-        elif self.args.encoder_type == 'conv':
-            in_features = self.encoder_output_size
+    for idx in range(args.models_layer_count):
+        if idx == 0:
+            in_features = first_layer_in
         else:
-            in_features = self.n_states
-        
-        return in_features
+            in_features = prev_layer_out
 
-    def build_linear_relu(self, first_layer_in, last_layer_out):
-        seq = nn.Sequential()
+        if idx == args.models_layer_count - 1:
+            out = last_layer_out 
 
-        prev_layer_out = None
-        out = self.args.models_layer_features
+        seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
 
-        for idx in range(self.args.models_layer_count):
-            if idx == 0:
-                in_features = first_layer_in
-            else:
-                in_features = prev_layer_out
-
-            if idx == self.args.models_layer_count - 1:
-                out = last_layer_out 
-
-            seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
+        if idx == args.models_layer_count - 1 and last_layer_activation == 'softmax':
+            seq.add_module(f"softmax_{idx}", nn.Softmax(dim=1))
+        else:
             seq.add_module(f"relu_{idx}", nn.ReLU())
-            prev_layer_out = out
         
-        return seq
+        prev_layer_out = out
+    
+    return seq
+
+
+
+# ======     DQN    ===========
+class DQN_model(nn.Module):
+    def __init__(self, args, first_layer_in, last_layer_out):
+        super(DQN_model, self).__init__()
+
+        self.seq = build_linear_relu(args, first_layer_in, last_layer_out)
+        init_parameters('dqn', self.seq)
+
+    def forward(self, x):
+        out = self.seq(x)
+        return out
+
+# ======     INVERSE    ========
+class Inverse_model(nn.Module):
+    def __init__(self, args, first_layer_in, last_layer_out):
+        super(Inverse_model, self).__init__()
+
+        self.seq = build_linear_relu(args, first_layer_in, last_layer_out)
+        init_parameters('inverse', self.seq)
+
+    def forward(self, x):
+        out = self.seq(x)
+        return out
+
+
+# ======     FORWARD    ========
+class Forward_model(nn.Module):
+    def __init__(self, args, first_layer_in, last_layer_out):
+        super(Forward_model, self).__init__()
+
+        self.seq = build_linear_relu(args, first_layer_in,last_layer_out, last_layer_activation='softmax')
+        init_parameters('forward', self.seq)
+
+    def forward(self, x):
+        out = self.seq(x)
+        return out
+
+    # def get_encoder_out(self):
+    #     if self.args.encoder_type == 'simple':
+    #         in_features = self.args.models_layer_features
+    #     elif self.args.encoder_type == 'conv':
+    #         in_features = self.encoder_output_size
+    #     else:
+    #         in_features = self.n_states
         
-    # ======     DQN    ========
-     
-    def build_dqn_model(self):
-        seq = self.build_linear_relu(first_layer_in=self.get_encoder_out(), last_layer_out=self.n_actions)
+    #     return in_features
 
-        seq = init_parameters('dqn', seq)
-        return seq
 
-    # ======     INVERSE    ========
+        
 
-    def build_inverse_model(self):
-        seq = self.build_linear_relu(first_layer_in=self.get_encoder_out() * 2, last_layer_out=self.n_actions)
 
-        seq.add_module("softmax", nn.Softmax(dim=1))
-        seq = init_parameters('inverse', seq)
-
-        return seq
 
     # ======     FORWARD    ========
 
@@ -240,15 +260,11 @@ class FeatureExtractor():
             self.encoder = SimpleEncoderModule(args, n_states).to(args.device)
                
         # Input size to RNN is output size from encoders or state size 
-        if args.encoder_type == 'conv':
-            self.encoder_output_size = self.encoder.out_size
-        else:
-            self.encoder_output_size = self.args.models_layer_features
-
-        self.fc_hidden_size = self.encoder_output_size # This is blind guess
+        encoder_output_size = args.models_layer_features
+        self.fc_hidden_size = encoder_output_size # This is blind guess
 
         self.layer_rnn = torch.nn.LSTM(
-            input_size=self.encoder_output_size,
+            input_size=encoder_output_size,
             hidden_size=self.fc_hidden_size,
             num_layers=self.len_layers_rnn,
             batch_first=True
