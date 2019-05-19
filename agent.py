@@ -14,7 +14,7 @@ from collections import deque
 from memory import Memory
 
 from collections import deque
-from models import FeatureExtractor, ModelBuilder, DQN_model
+from models import FeatureEncoder, FeatureDecoder, ModelBuilder, DQN_model
 
 def average(x):
     if not len(x):
@@ -50,12 +50,11 @@ class Agent(nn.Module):
 
         # --------- MODELS --------------
         if self.args.encoder_type != 'nothing':
-            self.feature_extractor = FeatureExtractor(self.args, self.n_states)
+            self.feature_encoder = FeatureEncoder(self.args, self.n_states)
+            encoder_out = self.feature_encoder.encoder_output_size
+            self.feature_decoder = FeatureDecoder(args, encoder_out, self.n_states)
         
         builder = ModelBuilder(self.args, self.n_states, self.n_actions)
-
-        if self.args.encoder_type == 'conv':
-            builder.encoder_output_size = self.feature_extractor.encoder_output_size
 
         self.dqn_model = builder.build_dqn_model()
         self.target_model = builder.build_dqn_model()
@@ -66,14 +65,20 @@ class Agent(nn.Module):
         logging.info('agent models ok')
 
         # --------   OPTIMIZER AND LOSS  ----
+        # Encoder
         if self.args.is_curiosity:
-            params = list(self.inverse_model.parameters()) + list(self.feature_extractor.encoder.parameters()) + list(self.forward_model.parameters()) + list(self.dqn_model.parameters())
+            params = list(self.inverse_model.parameters()) + list(self.feature_encoder.encoder.parameters()) + list(self.forward_model.parameters()) + list(self.dqn_model.parameters())
         else:
             params = self.dqn_model.parameters()
 
-        self.optimizer = torch.optim.Adam(params=params, lr = self.args.learning_rate)
+        self.optimizer_agent = torch.optim.Adam(params=params, lr = self.args.learning_rate)
 
-        logging.info('agent optimizer and loss ok')
+        if self.args.prioritized_type != 'nothing':
+            params_auto_encoder = list(self.feature_encoder.encoder.parameters()) + list(self.feature_decoder.decoder.parameters())
+
+            self.optimizer_autoencoder = torch.optim.Adam(params=params_auto_encoder, lr = self.args.learning_rate)
+
+        logging.info('agent optimizer and params ok')
 
         # --------- INTERNAL STATE -------
         self.current_episode = 0
@@ -134,10 +139,9 @@ class Agent(nn.Module):
             if args.debug_activations and len(args.debug_activations[0].split()) != 3:
                 logging.critical('debug_activations len(args) != 3, check help for formatting')
                 os._exit(0)
-
         if args.prioritized_type != 'random':
-            if args.per_b_annealing == None:
-                logging.critical('prioritized_type is proportional but per_b_annealing hasnt been set')
+            if args.per_b_anneal_to == 1:
+                logging.critical('prioritized_type is proportional but per_b_anneal_to hasnt been set')
                 os._exit(0)
 
         if args.prioritized_type == 'rank':
@@ -177,20 +181,36 @@ class Agent(nn.Module):
         return frame         
 
     # =======     SEQUENCE    =============
-    def get_features(self):
+    def encode_sequence(self):
          # Because when game starts we have just 1 frame and 1 batch size
         sequence_t = torch.stack(list(self.states_sequence))
         seq_lengths = torch.FloatTensor([[len(self.states_sequence)]]) # (batch, frames)
         sequence_t = torch.unsqueeze(sequence_t, 0) # Add batch dim
-        sequence_t = self.feature_extractor.extract_features(sequence_t, seq_lengths)
+        sequence_t = self.feature_encoder.extract_features(sequence_t, seq_lengths)
         sequence_t = torch.squeeze(sequence_t, 0) # Remove batch dim
         return sequence_t
 
     def get_next_sequence(self, next_state_t):        
         self.states_sequence.append(next_state_t)
 
-        features = self.get_features()
+        features = self.encode_sequence()
         return features
+
+    def decode_sequence(self, truth, h_vector):
+        batch_filled = self.feature_decoder.add_to_buffer(truth, h_vector)
+       
+        if batch_filled:
+            mse = torch.nn.MSELoss()
+            stacked_truth, pred = self.feature_decoder.decode_features() 
+            loss = mse(pred, truth) * self.args.decoder_coeficient
+
+            # print(float(loss))
+            loss.backward()
+            self.optimizer_autoencoder.step()
+            self.optimizer_autoencoder.zero_grad()
+
+        x=1
+
 
     # =====    GAME LOGIC    =============
     def reset_env(self):
@@ -244,6 +264,7 @@ class Agent(nn.Module):
 
         if is_terminal:
             self.terminal_episode()
+            self.memory.reset_beta()
 
         # if self.current_episode > 200:
             # self.env.render() 
@@ -258,7 +279,10 @@ class Agent(nn.Module):
         reward_t = torch.FloatTensor([reward]).to(self.args.device)
 
         if self.args.encoder_type != 'nothing':
+            truth = next_state_t
             next_state_t = self.get_next_sequence(next_state_t)
+
+            # self.decode_sequence(truth, next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
         transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]
@@ -337,8 +361,8 @@ class Agent(nn.Module):
 
     def backprop(self, loss):
         loss.backward()
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+        self.optimizer_agent.step()
+        self.optimizer_agent.zero_grad()
 
         if self.epsilon > self.args.epsilon_floor:
             self.epsilon -= self.args.epsilon_decay
@@ -438,6 +462,6 @@ class Agent(nn.Module):
         # DEBUGGING
         if self.args.debug_images:
             key = self.args.debug_activations[0]
-            debug_sequence(self.states_sequence, self.feature_extractor.encoder.activations[key])
+            debug_sequence(self.states_sequence, self.feature_encoder.encoder.activations[key])
   
         return loss_inverse, loss_cos

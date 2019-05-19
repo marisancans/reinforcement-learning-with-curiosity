@@ -76,6 +76,10 @@ class AbstractReplay(ABC):
     def get_batch(self, n):
         pass
 
+    @abstractmethod
+    def reset_beta(self):
+        pass
+
     
 
 # Uses sum tree
@@ -84,7 +88,8 @@ class ProportionalReplay(AbstractReplay):
         self.per_e = args.per_e  
         self.per_a = args.per_a 
         self.per_b = args.per_b
-        self.per_b_annealing = args.per_b_annealing
+        self.per_b_step = (1 - args.per_b) / args.per_b_anneal_to
+        self.args = args
 
         self.tree = SumTree(args.memory_size)
         self.new_elem_error = 10000
@@ -123,26 +128,29 @@ class ProportionalReplay(AbstractReplay):
         importance_sampling_weight = np.power(self.tree.n_entries * sampling_probabilities, -self.per_b)
         importance_sampling_weight /= importance_sampling_weight.max()
 
-        self.per_b = np.min([1., self.per_b + self.per_b_annealing])
+        self.per_b = np.min([1., self.per_b + self.per_b_step])
 
         return batch, np.array(idx_arr), importance_sampling_weight
 
     def update(self, errors, idxs):
         for e, i in zip(errors, idxs):
             p = self._getPriority(e)
-            self.tree.update(i, p)
-        
+            self.tree.update(i, p)      
+
+    def reset_beta(self):
+        self.per_b = self.args.per_b
         
 
 class RankReplay(AbstractReplay):
     def __init__(self, args):
+        self.args = args
         self.new_priority_score = 1.0 
         self.rank_update = args.rank_update
         self.memory_size = args.memory_size
 
         self.per_a = args.per_a
         self.per_b = args.per_b
-        self.per_b_annealing = args.per_b_annealing
+        self.per_b_step = (1 - args.per_b) / args.per_b_anneal_to
        
         self.id_to_state = {}
         self.buffer = []
@@ -196,8 +204,6 @@ class RankReplay(AbstractReplay):
                 
             self.findSegments(batch_size) # Has to be every n steps
 
-                
-        
         h_indices=[]
         for i in range(batch_size):
             if self.seg[i] != self.seg[i+1]:
@@ -218,7 +224,7 @@ class RankReplay(AbstractReplay):
         is_w = np.power((ranks * n), -self.per_b)
         is_w /= is_w.max()
 
-        self.per_b = np.min([1., self.per_b + self.per_b_annealing])
+        self.per_b = np.min([1., self.per_b + self.per_b_step])
         self.steps += 1
 
         return batch, h_indices, is_w
@@ -243,6 +249,9 @@ class RankReplay(AbstractReplay):
         for e, i in zip(errors, idxs):
             self.buffer[i] = (e, self.buffer[i][1])
 
+    def reset_beta(self):
+        self.per_b = self.args.per_b
+
 class RandomReplay(AbstractReplay):
     def __init__(self, args):
         self.buffer = deque(maxlen=args.memory_size)
@@ -260,6 +269,8 @@ class RandomReplay(AbstractReplay):
 
         return batch, None, None
 
+    def reset_beta(sefl):
+        pass
 
 
 #-------------------- MEMORY --------------------------
@@ -293,4 +304,6 @@ class Memory:
 
     def size(self):
         return self.mem.size()
-    
+
+    def reset_beta(self):
+        self.mem.reset_beta()

@@ -110,7 +110,6 @@ class ModelBuilder():
                             ).to(self.args.device)
         
 # =======           CONV  MODEL       =========
-
 class Hook():
     def __init__(self, module, backward=False):
         if backward==False:
@@ -124,9 +123,9 @@ class Hook():
     def close(self):
         self.hook.remove()
 
-class ConvEncoderModule(nn.Module):
+class ConvEncoder(nn.Module):
     def __init__(self, args, channels):
-        super(ConvEncoderModule, self).__init__()
+        super(ConvEncoder, self).__init__()
         self.args = args
         self.channels = channels
         self.out_size = 0
@@ -206,12 +205,19 @@ class ConvEncoderModule(nn.Module):
                
         return features
 
+# =======          CONV DECODER       =========
+class ConvDecoder(nn.Module):
+    def __init__(self, args):
+        super(ConvDecoder, self).__init__()
+    
+    print("IMPLEMENT CONV DECODER")
 
-# =======           SIMPLE ENCODER       =========
 
-class SimpleEncoderModule(nn.Module):
+
+# =======           SIMPLE ENCODER       =========z
+class SimpleEncoder(nn.Module):
     def __init__(self, args, n_states):
-        super(SimpleEncoderModule, self).__init__()
+        super(SimpleEncoder, self).__init__()
 
         self.seq = nn.Sequential()
 
@@ -226,12 +232,12 @@ class SimpleEncoderModule(nn.Module):
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
             self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
             
-            if idx < args.models_layer_count - 1:
+            if idx < len(args.simple_encoder_layers) - 1:
                 self.seq.add_module(f"relu_{idx}", nn.ReLU())
             
             prev_layer_out = out
 
-        init_parameters('simple', self)
+        init_parameters('simple encoder', self)
 
     def forward(self, x):
         x = x.squeeze(dim=0)
@@ -245,7 +251,7 @@ class SimpleEncoderModule(nn.Module):
         else:
             embedding = self.seq(x)
 
-        embedding = nn.functional.tanh(embedding)
+        embedding = F.tanh(embedding)
         embedding = embedding.unsqueeze(dim=0)
 
         #L2 normalization
@@ -256,20 +262,48 @@ class SimpleEncoderModule(nn.Module):
         return embedding
 
 
+# =======           SIMPLE ENCODER       =========
+class SimpleDecoder(nn.Module):
+    def __init__(self, args, first_layer_in, last_layer_out):
+        super(SimpleDecoder, self).__init__()
+
+        self.seq = nn.Sequential()
+
+        for idx, out in enumerate(args.simple_encoder_layers[::-1]): # Reversed
+            if idx == 0:
+                in_features = first_layer_in
+            else:
+                in_features = prev_layer_out
+
+            if idx == len(args.simple_encoder_layers) - 1:
+                out = last_layer_out 
+            
+            self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
+            self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
+            
+            if idx < len(args.simple_encoder_layers) - 1:
+                self.seq.add_module(f"relu_{idx}", nn.ReLU())
+            
+            prev_layer_out = out
+
+        init_parameters('simple decoder', self)
+
+    def forward(self, x):
+        x = self.seq(x)
+        return x
+
 
 # =======           FEATURE EXTRACTOR       =========
-
-
-class FeatureExtractor():
+class FeatureEncoder():
     def __init__(self, args, n_states):
         self.len_layers_rnn = 1  # This can be tested
         self.args = args
 
         if args.encoder_type == 'conv':
             channels = 1 if args.is_grayscale else 3
-            self.encoder = ConvEncoderModule(args, channels).to(args.device)
+            self.encoder = ConvEncoder(args, channels).to(args.device)
         else:
-            self.encoder = SimpleEncoderModule(args, n_states).to(self.args.device)
+            self.encoder = SimpleEncoder(args, n_states).to(self.args.device)
                
         # Input size to RNN is output size from encoders or state size 
         if args.encoder_type == 'conv':
@@ -321,10 +355,38 @@ class FeatureExtractor():
 
 
 
-# class DecoderModule(nn.Module):
-#      def __init__(self, args, n_states):
-#         super(DecoderModule, self).__init__()
+class FeatureDecoder():
+    def __init__(self, args, encoder_out, n_states):
+        if args.encoder_type == 'simple':
+            self.decoder = SimpleDecoder(args, first_layer_in=encoder_out, last_layer_out=n_states).to(args.device)
+        else:
+            "feature DECODER not implemented"
 
+        self.buffer_h_vector = []
+        self.buffer_truth = []
+        self.buffer_size = 0
+        self.buffer_max = 4
+
+    def add_to_buffer(self, truth, h_vector):
+        if self.buffer_size > self.buffer_max:
+            self.buffer_h_vector.clear()
+            self.buffer_truth.clear()
+            self.buffer_size = 0
+
+        self.buffer_truth.append(truth)
+        self.buffer_h_vector.append(h_vector)
+        self.buffer_size += 1
+
+        return self.buffer_size == self.buffer_max
+
+    # Collects X ammount of states as batch and then computes loss
+    def decode_features(self):       
+        stacked_truth = torch.stack(self.buffer_truth)
+        stacked_h = torch.stack(self.buffer_h_vector)
+        pred = self.decoder(stacked_h)
+        return stacked_truth, pred
+
+        
 #         self.conv_1 = torch.nn.Conv2d(in_channels=3, out_channels=10, kernel_size=5)
 #         self.conv_2 = torch.nn.Conv2d(in_channels=10, out_channels=20, kernel_size=5)
 
