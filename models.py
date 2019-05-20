@@ -3,9 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
-from modules.torch_utils import init_parameters
+from modules.torch_utils import init_parameters, to_numpy
 
-import random, re
+
+import random, re, math, cv2
 import numpy as np
 
 def build_linear_relu(feature_count, layer_count, first_layer_in, last_layer_out):
@@ -180,6 +181,8 @@ class ConvEncoder(nn.Module):
 
         self.encoder.add_module('avg_pool', torch.nn.AdaptiveAvgPool2d(output_size=1))
 
+        self.encoder_out = torch.nn.Linear(in_features=self.out_size, out_features=self.args.conv_encoder_layer_out)
+
     def get_activation(self, name):
         def hook(model, input, output):
             self.activations[name] = output.detach()
@@ -200,6 +203,7 @@ class ConvEncoder(nn.Module):
 
     def forward(self, x):
         features = self.encoder(x)
+
         #features = nn.functional.tanh(features)
         #features = features.view(-1)
                
@@ -207,10 +211,103 @@ class ConvEncoder(nn.Module):
 
 # =======          CONV DECODER       =========
 class ConvDecoder(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, encoder_features, original_shape):
         super(ConvDecoder, self).__init__()
+        h, w, c = original_shape
+
+        self.seq = nn.Sequential()
+
+        blocks = 8
+        prev = encoder_features
+
+
+
+        # for i in range(2, blocks):
+        #     if i < blocks - 1:
+        #         out = int(math.ceil(encoder_features / i))
+        #     else:
+        #         out = c
+           
+        #     self.seq.add_module(f'{i-2}_deconv', torch.nn.ConvTranspose2d(in_channels=prev, out_channels=out, kernel_size=3))
+        #     self.seq.add_module(f'{i-2}_deconv', torch.nn.ConvTranspose2d(in_channels=prev, out_channels=out, kernel_size=3))
+        #     self.seq.add_module(f'{i-2}_deconv', torch.nn.ConvTranspose2d(in_channels=prev, out_channels=out, kernel_size=3))
+        #     self.seq.add_module(f'{i-2}_relu', torch.nn.ReLU())
+
+        #     prev = out
+
+        # (i-k+2p)/s+1
+        # i = input
+        # k = kernel
+        # p = padding
+        # s = strinde
+
+        self.c1 = nn.ConvTranspose2d(in_channels=2208, out_channels=1104, kernel_size=3) # --> (3, 3)
+        self.b1 = nn.BatchNorm2d(num_features=1104)
+        self.c2 = nn.ConvTranspose2d(in_channels=1104, out_channels=552, kernel_size=3) # --> (5, 5)
+        self.b2 = nn.BatchNorm2d(num_features=552)
+        self.c3 = nn.ConvTranspose2d(in_channels=552, out_channels=271, kernel_size=3) # --> (7, 7)
+        self.b3 = nn.BatchNorm2d(num_features=271)
+        self.c4 = nn.ConvTranspose2d(in_channels=271, out_channels=136, kernel_size=3, padding=2, stride=2) # --> (11, 11)
+        self.b4 = nn.BatchNorm2d(num_features=136)
+        self.c5 = nn.ConvTranspose2d(in_channels=136, out_channels=68, kernel_size=3, padding=2, stride=2) # --> (19, 19)
+        self.b5 = nn.BatchNorm2d(num_features=68)
+        self.c6 = nn.ConvTranspose2d(in_channels=68, out_channels=34, kernel_size=3, padding=2, stride=2) # --> (35, 35)
+        self.b6 = nn.BatchNorm2d(num_features=34)
+        self.c7 = nn.ConvTranspose2d(in_channels=34, out_channels=16, kernel_size=2, padding=2, stride=2) # --> (66, 66)
+        self.b7 = nn.BatchNorm2d(num_features=16)
+        self.c8 = nn.ConvTranspose2d(in_channels=16, out_channels=8, kernel_size=2, padding=2, stride=2) # --> (128, 128)
+        self.b8 = nn.BatchNorm2d(num_features=8)
+        self.c9 = nn.ConvTranspose2d(in_channels=8, out_channels=4, kernel_size=2, padding=2, stride=2) # --> (252, 252)
+        self.b9 = nn.BatchNorm2d(num_features=4)
+        self.c10 = nn.ConvTranspose2d(in_channels=4, out_channels=3, kernel_size=2, padding=2, stride=2) # --> (500, 500)
+        self.b10 = nn.BatchNorm2d(num_features=3)
+        
+        init_parameters('deconv', self)
+
+    def forward(self, x):
+        feature_count = x.shape[0]
+        x = x.view(1, feature_count, 1, 1)
     
-    print("IMPLEMENT CONV DECODER")
+        x = self.c1(x)
+        x = F.relu(x)
+        x = self.b1(x)
+
+        x = self.c2(x)
+        x = F.relu(x)
+        x = self.b2(x)
+
+        x = self.c3(x)
+        x = F.relu(x)
+        x = self.b3(x)
+
+        x = self.c4(x)
+        x = F.relu(x)
+        x = self.b4(x)
+
+        x = self.c5(x)
+        x = F.relu(x)
+        x = self.b5(x)
+
+        x = self.c6(x)
+        x = F.relu(x)
+        x = self.b6(x)
+
+        x = self.c7(x)
+        x = F.relu(x)
+        x = self.b7(x)
+
+        x = self.c8(x)
+        x = F.relu(x)
+        x = self.b8(x)
+
+        x = self.c9(x)
+        x = F.relu(x)
+        x = self.b9(x)
+
+        x = self.c10(x)
+        x = F.relu(x)
+        x = self.b10(x)
+        return x
 
 
 
@@ -296,12 +393,12 @@ class SimpleDecoder(nn.Module):
 # =======           FEATURE EXTRACTOR       =========
 class FeatureEncoder():
     def __init__(self, args, n_states):
-        self.len_layers_rnn = 1  # This can be tested
+        self.rnn_layers = 1  # This can be tested
         self.args = args
 
         if args.encoder_type == 'conv':
             channels = 1 if args.is_grayscale else 3
-            self.encoder = ConvEncoder(args, channels).to(args.device)
+            self.encoder = ConvEncoder(args, channels).to(self.args.device)
         else:
             self.encoder = SimpleEncoder(args, n_states).to(self.args.device)
                
@@ -316,15 +413,16 @@ class FeatureEncoder():
         self.layer_rnn = torch.nn.LSTM(
             input_size=self.encoder_output_size,
             hidden_size=self.fc_hidden_size,
-            num_layers=self.len_layers_rnn,
+            num_layers=self.rnn_layers,
             batch_first=True
         ).to(self.args.device)
 
     def reset_hidden(self, batch_size):
-        self.hidden_rnn = torch.zeros(self.len_layers_rnn, batch_size, self.fc_hidden_size).to(self.args.device)
-        self.state_rnn = torch.zeros(self.len_layers_rnn, batch_size, self.fc_hidden_size).to(self.args.device)
+        self.hidden_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
+        self.state_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
 
     def extract_features(self, sequece_t, seq_lengths):
+        sequece_t = sequece_t.to(self.args.device)
         batch_size = sequece_t.shape[0]
 
         self.reset_hidden(batch_size)
@@ -356,11 +454,11 @@ class FeatureEncoder():
 
 
 class FeatureDecoder():
-    def __init__(self, args, encoder_out, n_states):
+    def __init__(self, args, encoder_out, n_states, original_shape):
         if args.encoder_type == 'simple':
             self.decoder = SimpleDecoder(args, first_layer_in=encoder_out, last_layer_out=n_states).to(args.device)
         else:
-            "feature DECODER not implemented"
+            self.decoder = ConvDecoder(args, encoder_features=encoder_out, original_shape=original_shape).to(args.device)
 
         self.buffer_h_vector = []
         self.buffer_truth = []
@@ -380,30 +478,14 @@ class FeatureDecoder():
         return self.buffer_size == self.buffer_max
 
     # Collects X ammount of states as batch and then computes loss
-    def decode_features(self):       
+    def decode_simple_features(self):       
         stacked_truth = torch.stack(self.buffer_truth)
         stacked_h = torch.stack(self.buffer_h_vector)
         pred = self.decoder(stacked_h)
         return stacked_truth, pred
 
+    def decode_conv_features(self, h_vecotr):
+        return self.decoder.forward(h_vecotr)
+
         
-#         self.conv_1 = torch.nn.Conv2d(in_channels=3, out_channels=10, kernel_size=5)
-#         self.conv_2 = torch.nn.Conv2d(in_channels=10, out_channels=20, kernel_size=5)
 
-#         self.deconv_1 = torch.nn.ConvTranspose2d(in_channels=20, out_channels=10, kernel_size=5)
-#         self.deconv_2 = torch.nn.ConvTranspose2d(in_channels=10, out_channels=3, kernel_size=5)
-
-
-#     def forward(self, x):
-#         # Encoder
-#         x = self.conv_1.forward(x)
-#         x = F.relu(x)
-#         x = self.conv_2.forward(x)
-#         x = F.relu(x)
-
-#         # Decoder
-#         x = self.deconv_1.forward(x)
-#         x = F.relu(x)
-#         x = self.deconv_2.forward(x)
-#         x = F.sigmoid(x)
-#         return x

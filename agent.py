@@ -5,7 +5,7 @@ import torchvision.models as models
 
 from modules.torch_utils import init_parameters
 from modules.torch_utils import to_numpy
-from modules.opencv_utils import debug_encoded_states, debug_sequence
+from modules.opencv_utils import debug_encoded_states, debug_sequence, debugVAE
 
 import random, gym, os, cv2, time, logging
 from gym import envs
@@ -42,8 +42,8 @@ class Agent(nn.Module):
         self.n_states = self.env.observation_space.shape[0]
         self.states_sequence = deque(maxlen=self.args.n_sequence)
 
-        self.state_max_val = self.env.observation_space.low.min()
-        self.state_min_val = self.env.observation_space.high.max()
+        self.state_max_val = self.env.observation_space.low
+        self.state_min_val = self.env.observation_space.high
         self.n_actions = self.env.action_space.n
         self.epsilon = 1.0
         logging.info('agent state ok')
@@ -52,9 +52,23 @@ class Agent(nn.Module):
         if self.args.encoder_type != 'nothing':
             self.feature_encoder = FeatureEncoder(self.args, self.n_states)
             encoder_out = self.feature_encoder.encoder_output_size
-            self.feature_decoder = FeatureDecoder(args, encoder_out, self.n_states)
+            self.env.reset()
+           
+            if self.args.encoder_type == 'conv':
+                if self.args.render_xvfb:
+                    img = self.env.render(mode='rgb_array')
+                    original_shape = img.shape 
+                else:
+                    original_shape = self.env.observation_space.high.shape
+            else:
+                original_shape = None
+            
+            self.feature_decoder = FeatureDecoder(args, encoder_out, self.n_states, original_shape=original_shape)
         
         builder = ModelBuilder(self.args, self.n_states, self.n_actions)
+
+        if self.args.encoder_type == 'conv':
+            builder.encoder_output_size = encoder_out
 
         self.dqn_model = builder.build_dqn_model()
         self.target_model = builder.build_dqn_model()
@@ -65,7 +79,6 @@ class Agent(nn.Module):
         logging.info('agent models ok')
 
         # --------   OPTIMIZER AND LOSS  ----
-        # Encoder
         if self.args.is_curiosity:
             params = list(self.inverse_model.parameters()) + list(self.feature_encoder.encoder.parameters()) + list(self.forward_model.parameters()) + list(self.dqn_model.parameters())
         else:
@@ -190,24 +203,35 @@ class Agent(nn.Module):
         sequence_t = torch.squeeze(sequence_t, 0) # Remove batch dim
         return sequence_t
 
-    def get_next_sequence(self, next_state_t):        
+    def get_next_sequence(self, next_state_t):    
         self.states_sequence.append(next_state_t)
 
         features = self.encode_sequence()
         return features
 
     def decode_sequence(self, truth, h_vector):
-        batch_filled = self.feature_decoder.add_to_buffer(truth, h_vector)
-       
-        if batch_filled:
-            mse = torch.nn.MSELoss()
-            stacked_truth, pred = self.feature_decoder.decode_features() 
-            loss = mse(pred, truth) * self.args.decoder_coeficient
+        mse = nn.MSELoss()
 
-            # print(float(loss))
+        if self.args.encoder_type == 'simple':
+            batch_filled = self.feature_decoder.add_to_buffer(truth, h_vector)
+       
+            if batch_filled:
+                stacked_truth, pred = self.feature_decoder.decode_simple_features() 
+                loss = mse(pred, truth) * self.args.decoder_coeficient
+                loss.backward()
+        else:
+            pred = self.feature_decoder.decode_conv_features(h_vector)
+            pred = pred.squeeze(0)
+            loss = mse(pred, truth) * self.args.decoder_coeficient
             loss.backward()
-            self.optimizer_autoencoder.step()
-            self.optimizer_autoencoder.zero_grad()
+            # debugVAE(pred, truth)     
+            
+        
+       
+        print(float(loss))
+        
+        self.optimizer_autoencoder.step()
+        self.optimizer_autoencoder.zero_grad()
 
         x=1
 
@@ -215,12 +239,17 @@ class Agent(nn.Module):
     # =====    GAME LOGIC    =============
     def reset_env(self):
         state = self.env.reset()
+        if self.args.render_xvfb:
+            state = self.env.render(mode='rgb_array')
 
         # If is image
         if len(state.shape) == 3:
             state = self.preproprocess_frame(state)
 
-        state_t = torch.FloatTensor(state).to(self.args.device)
+        if self.args.render_xvfb:
+            state_t = torch.from_numpy(np.flip(state, axis=0).copy()).float()# Fixes wierd torch error
+        else:
+            state_t = torch.FloatTensor(state)
 
         if self.args.encoder_type != 'nothing': 
             state_t = self.get_next_sequence(state_t)
@@ -256,6 +285,9 @@ class Agent(nn.Module):
         action, act_vector_t = self.act()
         next_state, reward, is_terminal, _ = self.env.step(action)
 
+        if self.args.render_xvfb:
+            next_state = self.env.render(mode='rgb_array')
+
         if self.args.is_normalized_state:
             next_state = self.normalize_state(next_state)
 
@@ -275,14 +307,18 @@ class Agent(nn.Module):
         if len(next_state.shape) == 3:
             next_state = self.preproprocess_frame(next_state)
 
-        next_state_t = torch.FloatTensor(next_state).to(self.args.device)
+        if self.args.render_xvfb:
+            next_state_t = torch.from_numpy(np.flip(next_state, axis=0).copy()).float()# Fixes wierd torch error
+        else:
+            next_state_t = torch.FloatTensor(next_state)
+        
         reward_t = torch.FloatTensor([reward]).to(self.args.device)
 
         if self.args.encoder_type != 'nothing':
-            truth = next_state_t
+            truth = next_state_t.to(self.args.device)
             next_state_t = self.get_next_sequence(next_state_t)
 
-            # self.decode_sequence(truth, next_state_t)
+            self.decode_sequence(truth, next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
         transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]
@@ -304,7 +340,7 @@ class Agent(nn.Module):
     def replay(self):     
         minibatch, idxs, importance_sampling_weight = self.memory.get_batch(self.args.batch_size)
 
-        state_t = torch.stack([x[0] for x in minibatch])
+        state_t = torch.stack([x[0] for x in minibatch]).to(self.args.device)
         recorded_action_t = torch.stack([x[1] for x in minibatch])
         reward_t = torch.cat([x[2] for x in minibatch])
         next_state_t = torch.stack([x[3] for x in minibatch])

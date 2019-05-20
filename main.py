@@ -5,6 +5,7 @@ from gym import envs
 import numpy as np
 
 from agent import Agent
+from pyvirtualdisplay import Display
 
 from modules.args_utils import ArgsUtils
 from modules.csv_utils import CsvUtils
@@ -14,7 +15,6 @@ from modules.logging_utils import LoggingUtils
 def arg_to_bool(x): return str(x).lower() == 'true'
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-mode', default=1, type=int, help='0 - compare agents, 1 - run single , 2 - multiprocess grid search')
 parser.add_argument('-device', default='cpu', help='cpu or cuda')
 
 parser.add_argument('-debug', default=False, type=arg_to_bool, help='Extra print statements between episodes')
@@ -58,8 +58,10 @@ parser.add_argument('-encoder_type', default='nothing', nargs='?', choices=['not
 parser.add_argument('-models_layer_count', type=int, required=True, help='Hidden layer count for inverse / forward / dqn / simple encoder models')
 parser.add_argument('-models_layer_features', type=int, required=True, help='Hidden layer FEATURE count for inverse / forward / dqn / simple encoder models')
 parser.add_argument('-simple_encoder_layers', type=int, default=[5, 5], nargs="+", help='How many outputs per each layer e.g. 256 64 32')
+parser.add_argument('-rnn_layers', type=int, default=1, help='How many hidden layers in LSTM')
 parser.add_argument('-conv_encoder_layer_out', default=1024, type=int)
 parser.add_argument('-decoder_coeficient', default=0, type=float, help='How much is decoder used in training 0..1')
+parser.add_argument('-render_xvfb', default=False, type=arg_to_bool, help='wether to render games like cart pole as an image')
 
 parser.add_argument('-is_ddqn', type=arg_to_bool, default=False, help='Is double DQN enabled?')
 parser.add_argument('-target_update', default=10, type=int, help='Update target network after n steps')
@@ -112,79 +114,38 @@ logging.info('global args ok')
 
 CsvUtils.create_local(args)
 
+if args.render_xvfb:
+    display = Display(visible=0, size=(1400, 900))
+    display.start()
+
 if torch.cuda.is_available():
     logging.info('cuda detected')
 
-mode = { 
-        0: 'comparison',
-        1: 'evaluate',
-    }
-
 def main():
-    logging.info('Running mode: {}'.format(mode[args.mode]))
-    run = {
-        0: comparison,
-        1: evaluate,
-        }
+    evaluate()
+
+
+def save(agent, i_episode):
+    now = datetime.datetime.now()
+    now = now.strftime("%B_%d_at_%H_%M_%p")
+    path = f'./save/{now}/{i_episode}/'
+    FileUtils.createDir(path)
+
+    torch.save(agent.optimizer_agent.state_dict(), path + 'optimizer_agent')
     
-    run[args.mode]()
+    torch.save(agent.dqn_model.state_dict(), path + 'dqn.pth')
+    torch.save(agent.target_model.state_dict(), path + 'dqn_target.pth')
 
-
-# This mode compares n agents
-# ==== MODE 0 ======
-def comparison():
-    # Args are passed as reference or is singleton, so deep copy is requred
-    agents = {}
-
-    args.is_curiosity = False
-    args.is_ddqn = False
+    if agent.args.is_curiosity:
+        torch.save(agent.forward_model.state_dict(), path + 'forward.pth')
+        torch.save(agent.inverse_model.state_dict(), path + 'inverse.pth')
     
-    ddqn_args = copy.deepcopy(args)
-    ddqn_args.is_ddqn = True
+    if agent.args.encoder_type != 'nothing':
+        torch.save(agent.feature_encoder.encoder.state_dict(), path + 'encoder.pth')
+        torch.save(agent.feature_decoder.decoder.state_dict(), path + 'decoder.pth')
+        torch.save(agent.optimizer_autoencoder.state_dict(), path + 'optimizer_autoencoder')
 
-    curious_args = copy.deepcopy(args)
-    curious_args.is_curiosity = True
-    
-    curious_ddqn_args = copy.deepcopy(args)
-    curious_ddqn_args.is_curiosity = True
-    curious_ddqn_args.is_ddqn = True
-
-    all_ers = {}
-
-    for n in ['dqn', 'ddqn', 'curious', 'curious_ddqn']:
-        all_ers[n] = np.zeros(shape=(args.parralel_runs, args.n_episodes)) 
-   
-    for run in range(args.parralel_runs):
-        agents['dqn'] = Agent(args, name='dqn')
-        agents['ddqn'] = Agent(ddqn_args, name='ddqn')
-        agents['curious'] = Agent(curious_args, name='curious')
-        agents['curious_ddqn'] = Agent(curious_ddqn_args, name='curious_ddqn')
-
-        for n, a in agents.items():
-            for i_episode in range(args.n_episodes):
-                a.reset_env()
-                is_done = False
-
-                while not is_done:
-                    is_done = a.play_step()
-                
-                all_ers[n][run][i_episode] = np.array(sum(a.e_reward))
-            
-            print('run', run, a.name)
-        print('Run', run, ' finished')
-
-        # End of i_episodes
-    # End of runs
-
-    log_comparison_agents(all_ers, folder_name='comp')
-
-
-
-# run just one agent
-# ==== MODE 1 ======
-def evaluate():   
-    save_folder = datetime.datetime.now().strftime("%b-%d-%H:%M")
-   
+def evaluate():    
     agent = Agent(args, name='curious')
     logging.info('Agent created, starting training')
         
@@ -203,6 +164,9 @@ def evaluate():
 
         if args.debug:
             logging.info(agent.print_debug(i_episode, t))
+
+        if i_episode + 1 % args.save_interval == 0:
+            save(agent, i_episode)
 
     state = agent.get_results()
     CsvUtils.add_results(args, state)
