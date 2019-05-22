@@ -319,7 +319,10 @@ class Agent(nn.Module):
             action_idx = random.randint(0, self.n_actions - 1)
         # Exploit
         else:
-            act_values = self.dqn_model(self.current_state) 
+            self.dqn_model.eval()
+            with torch.no_grad():
+                act_values = self.dqn_model(self.current_state)
+            self.dqn_model.train()
             _, action_idx = act_values.max(dim=0)
             action_idx = to_numpy(action_idx)
 
