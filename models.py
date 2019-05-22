@@ -5,7 +5,7 @@ import torchvision.models as models
 
 from modules.torch_utils import init_parameters, to_numpy
 
-
+from collections import deque
 import random, re, math, cv2
 import numpy as np
 
@@ -265,47 +265,46 @@ class ConvDecoder(nn.Module):
         init_parameters('deconv', self)
 
     def forward(self, x):
-        feature_count = x.shape[0]
-        x = x.view(1, feature_count, 1, 1)
+        x = x.view(x.shape[0], x.shape[1], 1, 1)
     
         x = self.c1(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b1(x)
 
         x = self.c2(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b2(x)
 
         x = self.c3(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b3(x)
 
         x = self.c4(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b4(x)
 
         x = self.c5(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b5(x)
 
         x = self.c6(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b6(x)
 
         x = self.c7(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b7(x)
 
         x = self.c8(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b8(x)
 
         x = self.c9(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b9(x)
 
         x = self.c10(x)
-        x = F.relu(x)
+        x = F.sigmoid(x)
         x = self.b10(x)
         return x
 
@@ -421,7 +420,7 @@ class FeatureEncoder():
         self.hidden_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
         self.state_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
 
-    def extract_features(self, sequece_t, seq_lengths):
+    def extract_features(self, sequece_t):
         sequece_t = sequece_t.to(self.args.device)
         batch_size = sequece_t.shape[0]
 
@@ -429,7 +428,7 @@ class FeatureEncoder():
 
         # ===   CONV   ===
         if self.args.encoder_type == 'conv': 
-            frames, channels, height, width = sequece_t.shape[1:]
+            frames, channels, height, width = sequece_t.shape[1:] #(B, Frames, C, H, W)
 
             # (Batch, Frames, C, H, W) --> (Batch * Frames, C, H, W)
             sequece_t = torch.reshape(sequece_t, shape=(batch_size * frames, channels, height, width))
@@ -460,32 +459,32 @@ class FeatureDecoder():
         else:
             self.decoder = ConvDecoder(args, encoder_features=encoder_out, original_shape=original_shape).to(args.device)
 
-        self.buffer_h_vector = []
-        self.buffer_truth = []
-        self.buffer_size = 0
-        self.buffer_max = 4
+        buffer_max = 32
+        self.buffer_h_vector = deque(maxlen=buffer_max)
+        self.buffer_truth = deque(maxlen=buffer_max)
+        
 
     def add_to_buffer(self, truth, h_vector):
-        if self.buffer_size > self.buffer_max:
-            self.buffer_h_vector.clear()
-            self.buffer_truth.clear()
-            self.buffer_size = 0
-
         self.buffer_truth.append(truth)
         self.buffer_h_vector.append(h_vector)
-        self.buffer_size += 1
-
-        return self.buffer_size == self.buffer_max
 
     # Collects X ammount of states as batch and then computes loss
     def decode_simple_features(self):       
         stacked_truth = torch.stack(self.buffer_truth)
         stacked_h = torch.stack(self.buffer_h_vector)
         pred = self.decoder(stacked_h)
+
         return stacked_truth, pred
 
-    def decode_conv_features(self, h_vecotr):
-        return self.decoder.forward(h_vecotr)
+    def decode_conv_features(self, h_vector):
+        h_vector = h_vector.view(1, 1, -1)
+
+        stacked_truth = torch.stack(tuple(self.buffer_truth))
+        stacked_h = torch.stack(tuple(self.buffer_h_vector))
+
+        pred = self.decoder.forward(stacked_h)
+
+        return stacked_truth, pred
 
         
 

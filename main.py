@@ -23,6 +23,7 @@ parser.add_argument('-debug_images', default=False, type=arg_to_bool, help='Use 
 parser.add_argument('-debug_activations', default='0 0 0 0', type=str, nargs='+', help='Show activation maps. Args: denseblock denselayer convlayer. Example: 1 13 2')
 
 parser.add_argument('-save_interval', default=100, type=int, help='Save model after n steps')
+parser.add_argument('-load_path', default='', help='folder name from where to load, last episode will be taken')
 
 parser.add_argument('-env_name', required=True, help='OpenAI game enviroment name')
 parser.add_argument('-learning_rate', default=0.001, type=float)
@@ -125,13 +126,20 @@ def main():
     evaluate()
 
 
-def save(agent, i_episode):
-    now = datetime.datetime.now()
-    now = now.strftime("%B_%d_at_%H_%M_%p")
-    path = f'./save/{now}/{i_episode}/'
+def save(agent, i_episode, dir_name):
+    path = f'./save/{dir_name}/{i_episode}/'
     FileUtils.createDir(path)
 
-    torch.save(agent.optimizer_agent.state_dict(), path + 'optimizer_agent')
+    if not os.path.isfile(path + 'args.txt'):
+        with open(path + "args.txt", "w") as f:
+            for arg in vars(args):
+                key = arg
+                value = getattr(args, arg)
+                if isinstance(value, list):
+                    value = ' '.join([str(it) for it in value])
+                f.write(f"{arg} : {value}\n")
+
+    torch.save(agent.optimizer_agent.state_dict(), path + 'optimizer_agent.pth')
     
     torch.save(agent.dqn_model.state_dict(), path + 'dqn.pth')
     torch.save(agent.target_model.state_dict(), path + 'dqn_target.pth')
@@ -143,9 +151,12 @@ def save(agent, i_episode):
     if agent.args.encoder_type != 'nothing':
         torch.save(agent.feature_encoder.encoder.state_dict(), path + 'encoder.pth')
         torch.save(agent.feature_decoder.decoder.state_dict(), path + 'decoder.pth')
-        torch.save(agent.optimizer_autoencoder.state_dict(), path + 'optimizer_autoencoder')
+        torch.save(agent.optimizer_autoencoder.state_dict(), path + 'optimizer_autoencoder.pth')
 
-def evaluate():    
+def evaluate():   
+    now = datetime.datetime.now()
+    dir_name = now.strftime("%B_%d_at_%H_%M_%p")
+
     agent = Agent(args, name='curious')
     logging.info('Agent created, starting training')
         
@@ -165,13 +176,15 @@ def evaluate():
         if args.debug:
             logging.info(agent.print_debug(i_episode, t))
 
-        if i_episode + 1 % args.save_interval == 0:
-            save(agent, i_episode)
+        # if (i_episode + 1) % args.save_interval == 0:
+        save(agent, i_episode + 1, dir_name)
 
     state = agent.get_results()
     CsvUtils.add_results(args, state)
     logging.info(f'Report: {args.id}  |   finished in {t:.2f} s')
+    agent.env.close()
 
 
 if __name__ == '__main__':
     main()
+

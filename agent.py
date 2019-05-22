@@ -5,7 +5,7 @@ import torchvision.models as models
 
 from modules.torch_utils import init_parameters
 from modules.torch_utils import to_numpy
-from modules.opencv_utils import debug_encoded_states, debug_sequence, debugVAE
+from modules.opencv_utils import debug_encoded_states, debug_sequence, debug_auto
 
 import random, gym, os, cv2, time, logging
 from gym import envs
@@ -121,6 +121,9 @@ class Agent(nn.Module):
 
         self.update_target()
 
+        if self.args.load_path:
+            self.load_models(self.args.load_path)
+
 
 
     # ======    ARG CHECKING =============
@@ -166,6 +169,52 @@ class Agent(nn.Module):
             logging.critical('Memory size has to be larger than batch size')
             os._exit(0)
 
+        if args.load_path:
+            if not os.path.exists(args.load_path):
+                logging.critical('Load folder not found!')
+                os._exit(0)
+
+    def load_models(self, path):
+        device = self.args.device
+
+        dqn = path + '/' + 'dqn.pth'
+        dqn_target = path + '/' + 'dqn_target.pth'
+        optimizer_agent = path + '/' + 'optimizer_agent.pth'
+
+        dqn = torch.load(dqn, map_location=device)
+        dqn_target = torch.load(dqn_target, map_location=device)
+        optimizer_agent = torch.load(optimizer_agent, map_location=device)
+        
+        self.dqn_model.load_state_dict(dqn)
+        self.target_model.load_state_dict(dqn_target)
+        self.optimizer_agent.load_state_dict(optimizer_agent)
+
+
+
+        if self.args.is_curiosity:
+            forward = path + '/' + 'forward.pth'
+            inverse = path + '/' + 'inverse.pth'
+
+            forward = torch.load(forward, map_location=device)
+            inverse = torch.load(inverse, map_location=device)
+
+            self.forward_model.load_state_dict(forward)
+            self.inverse_model.load_state_dict(inverse)
+        
+        if self.args.encoder_type != 'nothing':
+            encoder = path + '/' + 'encoder.pth'
+            decoder = path + '/' + 'decoder.pth'
+            optimizer_autoencoder = path + '/' + 'optimizer_autoencoder.pth'
+
+            encoder = torch.load(encoder, map_location=device)
+            decoder = torch.load(decoder, map_location=device)
+            optimizer_autoencoder = torch.load(optimizer_autoencoder, map_location=device)
+
+            self.feature_encoder.encoder.load_state_dict(encoder)
+            self.feature_decoder.decoder.load_state_dict(decoder)
+            self.optimizer_autoencoder.load_state_dict(optimizer_autoencoder)
+        logging.info('Modules loaded from checkpoint')
+
 
     # Normalize -1..1
     def normalize_state(self, x):
@@ -197,19 +246,21 @@ class Agent(nn.Module):
     def encode_sequence(self):
          # Because when game starts we have just 1 frame and 1 batch size
         sequence_t = torch.stack(list(self.states_sequence))
-        seq_lengths = torch.FloatTensor([[len(self.states_sequence)]]) # (batch, frames)
         sequence_t = torch.unsqueeze(sequence_t, 0) # Add batch dim
-        sequence_t = self.feature_encoder.extract_features(sequence_t, seq_lengths)
+        sequence_t = self.feature_encoder.extract_features(sequence_t)
         sequence_t = torch.squeeze(sequence_t, 0) # Remove batch dim
         return sequence_t
 
     def get_next_sequence(self, next_state_t):    
+        if self.args.is_grayscale:
+            next_state_t = next_state_t.unsqueeze(0)
+
         self.states_sequence.append(next_state_t)
 
         features = self.encode_sequence()
         return features
 
-    def decode_sequence(self, truth, h_vector):
+    def decode_sequence(self, truth, h_vector, truth_sequence=None):
         mse = nn.MSELoss()
 
         if self.args.encoder_type == 'simple':
@@ -220,21 +271,17 @@ class Agent(nn.Module):
                 loss = mse(pred, truth) * self.args.decoder_coeficient
                 loss.backward()
         else:
-            pred = self.feature_decoder.decode_conv_features(h_vector)
-            pred = pred.squeeze(0)
-            loss = mse(pred, truth) * self.args.decoder_coeficient
-            loss.backward()
-            # debugVAE(pred, truth)     
-            
-        
+            self.feature_decoder.add_to_buffer(truth, h_vector)
        
-        print(float(loss))
+            stacked_truth, pred = self.feature_decoder.decode_conv_features(h_vector)
+            # debug_auto(pred[0], stacked_truth)  
+            loss = mse(pred, stacked_truth) * self.args.decoder_coeficient
+            loss.backward()
+        
+            # print(float(loss))
         
         self.optimizer_autoencoder.step()
         self.optimizer_autoencoder.zero_grad()
-
-        x=1
-
 
     # =====    GAME LOGIC    =============
     def reset_env(self):
@@ -318,7 +365,7 @@ class Agent(nn.Module):
             truth = next_state_t.to(self.args.device)
             next_state_t = self.get_next_sequence(next_state_t)
 
-            self.decode_sequence(truth, next_state_t)
+            self.decode_sequence(truth, next_state_t, self.states_sequence)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
         transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]
