@@ -215,31 +215,9 @@ class ConvDecoder(nn.Module):
         super(ConvDecoder, self).__init__()
         h, w, c = original_shape
 
-        self.seq = nn.Sequential()
-
-        blocks = 8
-        prev = encoder_features
-
-
-
-        # for i in range(2, blocks):
-        #     if i < blocks - 1:
-        #         out = int(math.ceil(encoder_features / i))
-        #     else:
-        #         out = c
-           
-        #     self.seq.add_module(f'{i-2}_deconv', torch.nn.ConvTranspose2d(in_channels=prev, out_channels=out, kernel_size=3))
-        #     self.seq.add_module(f'{i-2}_deconv', torch.nn.ConvTranspose2d(in_channels=prev, out_channels=out, kernel_size=3))
-        #     self.seq.add_module(f'{i-2}_deconv', torch.nn.ConvTranspose2d(in_channels=prev, out_channels=out, kernel_size=3))
-        #     self.seq.add_module(f'{i-2}_relu', torch.nn.ReLU())
-
-        #     prev = out
-
-        # (i-k+2p)/s+1
-        # i = input
-        # k = kernel
-        # p = padding
-        # s = strinde
+        if args.encoder_type == 'conv':
+            channels = 1 if args.is_grayscale else 3
+      
 
         self.c1 = nn.ConvTranspose2d(in_channels=2208, out_channels=1104, kernel_size=3) # --> (3, 3)
         self.b1 = nn.BatchNorm2d(num_features=1104)
@@ -264,47 +242,45 @@ class ConvDecoder(nn.Module):
         
         init_parameters('deconv', self)
 
-    def forward(self, x):
-        x = x.view(x.shape[0], x.shape[1], 1, 1)
-    
+    def forward(self, x):   
         x = self.c1(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b1(x)
 
         x = self.c2(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b2(x)
 
         x = self.c3(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b3(x)
 
         x = self.c4(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b4(x)
 
         x = self.c5(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b5(x)
 
         x = self.c6(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b6(x)
 
         x = self.c7(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b7(x)
 
         x = self.c8(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b8(x)
 
         x = self.c9(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b9(x)
 
         x = self.c10(x)
-        x = F.sigmoid(x)
+        x = F.relu(x)
         x = self.b10(x)
         return x
 
@@ -459,32 +435,16 @@ class FeatureDecoder():
         else:
             self.decoder = ConvDecoder(args, encoder_features=encoder_out, original_shape=original_shape).to(args.device)
 
-        buffer_max = 32
-        self.buffer_h_vector = deque(maxlen=buffer_max)
-        self.buffer_truth = deque(maxlen=buffer_max)
-        
-
-    def add_to_buffer(self, truth, h_vector):
-        self.buffer_truth.append(truth)
-        self.buffer_h_vector.append(h_vector)
-
-    # Collects X ammount of states as batch and then computes loss
-    def decode_simple_features(self):       
-        stacked_truth = torch.stack(self.buffer_truth)
-        stacked_h = torch.stack(self.buffer_h_vector)
+    def decode_simple_features(self, h_vector):       
         pred = self.decoder(stacked_h)
-
-        return stacked_truth, pred
+        return pred
 
     def decode_conv_features(self, h_vector):
-        h_vector = h_vector.view(1, 1, -1)
+        feature_count = h_vector.shape[0]
+        h_vector = h_vector.view(1, feature_count, 1, 1)
+        pred = self.decoder.forward(h_vector)
 
-        stacked_truth = torch.stack(tuple(self.buffer_truth))
-        stacked_h = torch.stack(tuple(self.buffer_h_vector))
-
-        pred = self.decoder.forward(stacked_h)
-
-        return stacked_truth, pred
+        return pred
 
         
 

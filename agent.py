@@ -260,25 +260,20 @@ class Agent(nn.Module):
         features = self.encode_sequence()
         return features
 
-    def decode_sequence(self, truth, h_vector, truth_sequence=None):
+    def decode_sequence(self, truth, h_vector):
         mse = nn.MSELoss()
 
         if self.args.encoder_type == 'simple':
-            batch_filled = self.feature_decoder.add_to_buffer(truth, h_vector)
-       
-            if batch_filled:
-                stacked_truth, pred = self.feature_decoder.decode_simple_features() 
-                loss = mse(pred, truth) * self.args.decoder_coeficient
-                loss.backward()
+            pred = self.feature_decoder.decode_simple_features(h_vector)   
         else:
-            self.feature_decoder.add_to_buffer(truth, h_vector)
-       
-            stacked_truth, pred = self.feature_decoder.decode_conv_features(h_vector)
-            # debug_auto(pred[0], stacked_truth)  
-            loss = mse(pred, stacked_truth) * self.args.decoder_coeficient
-            loss.backward()
-        
-            # print(float(loss))
+            pred = self.feature_decoder.decode_conv_features(h_vector)
+            pred = pred.squeeze(0)
+            # debug_auto(pred, truth)  
+            
+        loss = mse(pred, truth) * self.args.decoder_coeficient
+        loss.backward()
+
+        # print(float(loss))
         
         self.optimizer_autoencoder.step()
         self.optimizer_autoencoder.zero_grad()
@@ -365,7 +360,7 @@ class Agent(nn.Module):
             truth = next_state_t.to(self.args.device)
             next_state_t = self.get_next_sequence(next_state_t)
 
-            self.decode_sequence(truth, next_state_t, self.states_sequence)
+            # self.decode_sequence(truth, next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
         transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]

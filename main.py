@@ -7,6 +7,7 @@ import numpy as np
 from agent import Agent
 from pyvirtualdisplay import Display
 
+
 from modules.args_utils import ArgsUtils
 from modules.csv_utils import CsvUtils
 from modules.file_utils import FileUtils
@@ -119,6 +120,9 @@ if args.render_xvfb:
     display = Display(visible=0, size=(1400, 900))
     display.start()
 
+
+    
+
 if torch.cuda.is_available():
     logging.info('cuda detected')
 
@@ -167,7 +171,7 @@ def evaluate():
         
         while not is_done:
             is_done = agent.play_step()
-                         
+                        
         t = time.time() - start
         
         state = agent.get_results()
