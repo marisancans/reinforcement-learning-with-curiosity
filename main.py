@@ -55,22 +55,22 @@ parser.add_argument('-image_crop', default=0, type=int, nargs='+', help='Coordin
 parser.add_argument('-is_grayscale', default=False, type=arg_to_bool, help='Whether state image is converted from RGB to grayscale ')
 
 parser.add_argument('-is_curiosity', default=False, type=arg_to_bool)
-parser.add_argument('-curiosity_beta', default=0.2, type=float, help='Beta hyperparameter for curiosity module')
-parser.add_argument('-curiosity_lambda', default=0.1, type=float, help='Lambda hyperparameter for curiosity module')
+parser.add_argument('-curiosity_beta', default=0.5, type=float, help='Beta hyperparameter for curiosity module')
+parser.add_argument('-curiosity_lambda', default=1.0, type=float, help='Lambda hyperparameter for curiosity module')
 parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
 
 # if simple or conv autoencoder will be included
 # important encoder_warmup_dqn_reset_steps and encoder_warmup_dqn_reset_steps_end
-parser.add_argument('-encoder_type', default='nothing', nargs='?', choices=['nothing', 'simple', 'conv'], help='Which type od encoder to use, depends on game state (default: %(default)s)')
+parser.add_argument('-encoder_type', default='simple', nargs='?', choices=['nothing', 'simple', 'conv'], help='Which type od encoder to use, depends on game state (default: %(default)s)')
 parser.add_argument('-n_sequence', default=1, type=int, help='How many stacked states will be passed to encoder')
 parser.add_argument('-encoder_warmup_dqn_reset_steps', default=500, type=int) # warmup autoencoder
-parser.add_argument('-encoder_warmup_dqn_reset_steps_end', default=2000, type=int)  # warmup autoencoder
+parser.add_argument('-encoder_warmup_dqn_reset_steps_end', default=3000, type=int)  # warmup autoencoder
 parser.add_argument('-encoder_warmup_lock', default=False, type=arg_to_bool)
 
 parser.add_argument('-encoding_size', type=int, default=4)
 parser.add_argument('-models_layer_count', type=int, default=2, help='Hidden layer count for inverse / forward / dqn / simple encoder models')
 parser.add_argument('-models_layer_features', type=int, default=16, help='Hidden layer FEATURE count for inverse / forward / dqn / simple encoder models')
-parser.add_argument('-simple_encoder_layers', type=int, default=[32, 32], nargs="+", help='How many outputs per each layer e.g. 256 64 32')
+parser.add_argument('-simple_encoder_layers', type=int, default=[16, 8], nargs="+", help='How many outputs per each layer e.g. 256 64 32')
 parser.add_argument('-rnn_layers', type=int, default=1, help='How many hidden layers in LSTM')
 
 parser.add_argument('-conv_encoder_layer_out', default=1024, type=int)

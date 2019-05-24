@@ -372,6 +372,7 @@ class Agent(nn.Module):
             # Auto Encoder training
             target_state_t = next_state_t.to(self.args.device)
             next_state_t = self.encode_sequence_with_next_state(next_state_t)
+            next_state_t = next_state_t.detach()
             self.decode_sequence(target_state_t, next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
