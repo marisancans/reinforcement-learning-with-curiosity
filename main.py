@@ -41,12 +41,11 @@ parser.add_argument('-memory_size', default=100, type=int, help="Replay memory s
 parser.add_argument('-prioritized_type', default='rank', help='random / proportional / rank')
 parser.add_argument('-rank_update', default=10, type=int, help='After how many steps is memory sorted(only for rank prioritization)')
 parser.add_argument('-per_e', default=0.01, type=float, help='Hyperparameter that we use to avoid some experiences to have 0 probability of being taken')
-parser.add_argument('-per_a', default=0.9, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly')
+parser.add_argument('-per_a', default=0.5, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly')
 parser.add_argument('-per_b', default=0.1, type=float, help='Importance-sampling, from initial value increasing to 1')
-parser.add_argument('-per_b_anneal_to', default=100, type=int, help='At which frame does beta anneal to 1.0')
+parser.add_argument('-per_b_anneal_to', default=100000, type=int, help='At which frame does beta anneal to 1.0')
 
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
-parser.add_argument('-n_sequence', default=4, type=int, help='How many stacked states will be passed to encoder')
 parser.add_argument('-n_frame_skip', default=1, type=int, help='How many frames to skip, before pushing to frame stack')
 parser.add_argument('-image_crop', default=0, type=int, nargs='+', help='Coordinates to crop image, x1 y1 x2 y2')
 parser.add_argument('-is_grayscale', default=False, type=arg_to_bool, help='Whether state image is converted from RGB to grayscale ')
@@ -59,19 +58,21 @@ parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic
 # if simple or conv autoencoder will be included
 # important encoder_warmup_dqn_reset_steps and encoder_warmup_dqn_reset_steps_end
 parser.add_argument('-encoder_type', default='simple', nargs='?', choices=['nothing', 'simple', 'conv'], help='Which type od encoder to use, depends on game state (default: %(default)s)')
-parser.add_argument('-encoder_warmup_dqn_reset_steps', default=50, type=int) # warmup autoencoder
-parser.add_argument('-encoder_warmup_dqn_reset_steps_end', default=200, type=int)  # warmup autoencoder
+parser.add_argument('-n_sequence', default=4, type=int, help='How many stacked states will be passed to encoder')
+parser.add_argument('-decoder_coeficient', default=10.0, type=float, help='How much is decoder used in training 0..1')
+parser.add_argument('-encoder_warmup_dqn_reset_steps', default=500, type=int) # warmup autoencoder
+parser.add_argument('-encoder_warmup_dqn_reset_steps_end', default=3000, type=int)  # warmup autoencoder
 
+parser.add_argument('-encoding_size', type=int, default=64)
 parser.add_argument('-models_layer_count', type=int, default=2, help='Hidden layer count for inverse / forward / dqn / simple encoder models')
-parser.add_argument('-models_layer_features', type=int, default=16, help='Hidden layer FEATURE count for inverse / forward / dqn / simple encoder models')
-parser.add_argument('-simple_encoder_layers', type=int, default=[2, 3], nargs="+", help='How many outputs per each layer e.g. 256 64 32')
+parser.add_argument('-models_layer_features', type=int, default=32, help='Hidden layer FEATURE count for inverse / forward / dqn / simple encoder models')
+parser.add_argument('-simple_encoder_layers', type=int, default=[32, 32], nargs="+", help='How many outputs per each layer e.g. 256 64 32')
 parser.add_argument('-rnn_layers', type=int, default=1, help='How many hidden layers in LSTM')
 parser.add_argument('-conv_encoder_layer_out', default=1024, type=int)
-parser.add_argument('-decoder_coeficient', default=1.0, type=float, help='How much is decoder used in training 0..1')
 parser.add_argument('-render_xvfb', default=False, type=arg_to_bool, help='wether to render games like cart pole as an image')
 
 parser.add_argument('-is_ddqn', type=arg_to_bool, default=True, help='Is double DQN enabled?')
-parser.add_argument('-target_update', default=100, type=int, help='Update target network after n steps')
+parser.add_argument('-target_update', default=50, type=int, help='Update target network after n steps')
 
 parser.add_argument('-id', default=0, type=int)
 parser.add_argument('-repeat_id', default=0, type=int)

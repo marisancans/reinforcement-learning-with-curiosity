@@ -52,7 +52,7 @@ class Agent(nn.Module):
         # --------- MODELS --------------
         if self.args.encoder_type != 'nothing':
             self.feature_encoder = FeatureEncoder(self.args, self.n_states)
-            encoder_out = self.feature_encoder.encoder_output_size
+            encoder_out = self.feature_encoder.fc_hidden_size
             self.env.reset()
            
             if self.args.encoder_type == 'conv':
@@ -262,21 +262,20 @@ class Agent(nn.Module):
         features = self.encode_sequence()
         return features
 
-    def decode_sequence(self, truth, h_vector):
-        mse = nn.MSELoss()
+    def decode_sequence(self, target, h_vector):
 
         if self.args.encoder_type == 'simple':
-            pred = self.feature_decoder.decode_simple_features(h_vector)   
+            pred = self.feature_decoder.decode_simple_features(h_vector)
         else:
             pred = self.feature_decoder.decode_conv_features(h_vector)
             pred = pred.squeeze(0)
-            # debug_auto(pred, truth)  
-            
-        loss_enc = mse(pred, truth) * self.args.decoder_coeficient
+            # debug_auto(pred, target)
+
+        loss_enc = F.mse_loss(pred, target) * self.args.decoder_coeficient
         loss_enc.backward(retain_graph=True)
 
         #print(float(loss))
-        
+
         self.optimizer_autoencoder.step()
         self.optimizer_autoencoder.zero_grad()
 
@@ -347,7 +346,9 @@ class Agent(nn.Module):
 
         if is_terminal:
             self.terminal_episode()
-            self.memory.reset_beta()
+
+            # should not reset after every episode
+            #self.memory.reset_beta()
 
         # if self.current_episode > 200:
             # self.env.render() 
@@ -389,15 +390,18 @@ class Agent(nn.Module):
 
         self.update_target()
 
-        if self.total_steps < self.args.encoder_warmup_dqn_reset_steps_end:
-            if self.total_steps % self.args.encoder_warmup_dqn_reset_steps == 0:
-                # resetting policy models in order to learn autencoder
-                init_parameters('dqn_model', self.dqn_model)
-                init_parameters('target_model', self.target_model)
-                # reset memory also
-                self.memory = Memory(self.args)
-                # rest optimizer
-                self.optimizer_agent.state = collections.defaultdict(dict)
+        if self.args.encoder_type != 'nothing':
+            if self.total_steps < self.args.encoder_warmup_dqn_reset_steps_end:
+                if self.total_steps % self.args.encoder_warmup_dqn_reset_steps == 0:
+                    # resetting policy models in order to learn autencoder
+                    init_parameters('dqn_model', self.dqn_model)
+                    init_parameters('target_model', self.target_model)
+                    # reset memory also
+                    self.memory = Memory(self.args)
+                    # rest optimizer
+                    self.optimizer_agent.state = collections.defaultdict(dict)
+                    if self.args.debug:
+                        print(f'reseting dqn, warmup (should start counting agent progress from last warmup) {self.total_steps // self.args.encoder_warmup_dqn_reset_steps + 1}/{self.args.encoder_warmup_dqn_reset_steps_end // self.args.encoder_warmup_dqn_reset_steps}')
     
     def replay(self):     
         minibatch, idxs, importance_sampling_weight = self.memory.get_batch(self.args.batch_size)
@@ -481,7 +485,7 @@ class Agent(nn.Module):
             info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | enc:  {enc_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} | mem: {self.memory.size()}"
 
             if self.args.prioritized_type != 'random':
-                info += f' | per_b: {self.memory.mem.per_b:.2f}'
+                info += f' | per_b: {self.memory.mem.per_b:.4f}'
                 
             if self.args.is_curiosity:
                 curious_info = f" | n_steps: {self.total_steps} | com: {self.loss_combined[-1]:.4f} | inv: {self.loss_inverse[-1]:.4f} | cos: {self.cos_distance[-1]:.4f}"

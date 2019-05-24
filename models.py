@@ -80,10 +80,8 @@ class ModelBuilder():
         self.encoder_output_size = 0
 
     def get_encoder_out(self):
-        if self.args.encoder_type == 'simple':
-            in_features = self.args.simple_encoder_layers[-1]
-        elif self.args.encoder_type == 'conv':
-            in_features = self.encoder_output_size
+        if self.args.encoder_type != 'nothing':
+            in_features = self.args.encoding_size
         else:
             in_features = self.n_states
         
@@ -302,10 +300,7 @@ class SimpleEncoder(nn.Module):
                 in_features = prev_layer_out
             
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
-            #self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
-            
-            if idx < len(args.simple_encoder_layers) - 1:
-                self.seq.add_module(f"relu_{idx}", nn.ReLU())
+            self.seq.add_module(f"relu_{idx}", nn.ReLU())
             
             prev_layer_out = out
 
@@ -377,9 +372,9 @@ class FeatureEncoder():
         else:
             self.encoder_output_size = self.args.simple_encoder_layers[-1]
 
-        self.fc_hidden_size = self.encoder_output_size # This is blind guess
+        self.fc_hidden_size = self.args.encoding_size
 
-        self.layer_rnn = torch.nn.LSTM(
+        self.layer_rnn = torch.nn.GRU(
             input_size=self.encoder_output_size,
             hidden_size=self.fc_hidden_size,
             num_layers=self.rnn_layers,
@@ -388,7 +383,7 @@ class FeatureEncoder():
 
     def reset_hidden(self, batch_size):
         self.hidden_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
-        self.state_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
+        #self.state_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
 
     def extract_features(self, sequece_t):
         sequece_t = sequece_t.to(self.args.device)
@@ -412,7 +407,7 @@ class FeatureEncoder():
             sequece_t = self.encoder(sequece_t)
 
         # ===   RNN    ===    
-        output, hidden = self.layer_rnn(sequece_t, (self.hidden_rnn, self.state_rnn))
+        output, hidden = self.layer_rnn.forward(sequece_t, self.hidden_rnn)
 
         output_last = output[:, -1:, :] # Take last output
 
