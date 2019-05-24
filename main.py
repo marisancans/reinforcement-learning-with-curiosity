@@ -54,10 +54,10 @@ parser.add_argument('-n_frame_skip', default=1, type=int, help='How many frames 
 parser.add_argument('-image_crop', default=0, type=int, nargs='+', help='Coordinates to crop image, x1 y1 x2 y2')
 parser.add_argument('-is_grayscale', default=False, type=arg_to_bool, help='Whether state image is converted from RGB to grayscale ')
 
-parser.add_argument('-is_curiosity', default=False, type=arg_to_bool)
+parser.add_argument('-is_curiosity', default=True, type=arg_to_bool)
 parser.add_argument('-curiosity_beta', default=0.5, type=float, help='Beta hyperparameter for curiosity module')
-parser.add_argument('-curiosity_lambda', default=1.0, type=float, help='Lambda hyperparameter for curiosity module')
-parser.add_argument('-curiosity_scale', default=1.0, type=float, help='Intrinsic reward scale factor')
+parser.add_argument('-curiosity_lambda', default=0.5, type=float, help='Lambda hyperparameter for curiosity module')
+parser.add_argument('-curiosity_scale', default=100.0, type=float, help='Intrinsic reward scale factor')
 
 # if simple or conv autoencoder will be included
 # important encoder_warmup_dqn_reset_steps and encoder_warmup_dqn_reset_steps_end
