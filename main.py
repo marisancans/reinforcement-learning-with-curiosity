@@ -26,7 +26,7 @@ parser.add_argument('-debug_activations', default='0 0 0 0', type=str, nargs='+'
 parser.add_argument('-save_interval', default=100, type=int, help='Save model after n steps')
 parser.add_argument('-load_path', default='', help='folder name from where to load, last episode will be taken')
 
-parser.add_argument('-env_name', default='CartPole-v0', help='OpenAI game enviroment name')
+parser.add_argument('-env_name', default='MountainCar-v0', help='OpenAI game enviroment name, CartPole-v0')
 parser.add_argument('-learning_rate', default=1e-3, type=float)
 parser.add_argument('-decoder_coeficient', default=1e-2, type=float, help='How much is decoder used in training 0..1')
 parser.add_argument('-batch_size', default=32, type=int)
@@ -41,13 +41,13 @@ parser.add_argument('-n_frames', default=9999, type=int, help='Number of frames 
 
 parser.add_argument('-offline_iterations', default=1, type=int)
 
-parser.add_argument('-memory_size', default=100, type=int, help="Replay memory size (This code uses sum tree, not deque)")
+parser.add_argument('-memory_size', default=1000, type=int, help="Replay memory size (This code uses sum tree, not deque)")
 parser.add_argument('-prioritized_type', default='rank', help='random / proportional / rank')
 parser.add_argument('-rank_update', default=10, type=int, help='After how many steps is memory sorted(only for rank prioritization)')
 parser.add_argument('-per_e', default=0.01, type=float, help='Hyperparameter that we use to avoid some experiences to have 0 probability of being taken')
-parser.add_argument('-per_a', default=0.9, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly')
+parser.add_argument('-per_a', default=2.0, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly 0 = random ')
 parser.add_argument('-per_b', default=0.1, type=float, help='Importance-sampling, from initial value increasing to 1')
-parser.add_argument('-per_b_anneal_to', default=100000, type=int, help='At which frame does beta anneal to 1.0')
+parser.add_argument('-per_b_anneal_to', default=1000, type=int, help='At which frame does beta anneal to 1.0')
 
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
 parser.add_argument('-n_frame_skip', default=1, type=int, help='How many frames to skip, before pushing to frame stack')
@@ -56,8 +56,8 @@ parser.add_argument('-is_grayscale', default=False, type=arg_to_bool, help='Whet
 
 parser.add_argument('-is_curiosity', default=True, type=arg_to_bool)
 parser.add_argument('-curiosity_beta', default=0.5, type=float, help='Beta hyperparameter for curiosity module')
-parser.add_argument('-curiosity_lambda', default=0.5, type=float, help='Lambda hyperparameter for curiosity module')
-parser.add_argument('-curiosity_scale', default=100.0, type=float, help='Intrinsic reward scale factor')
+parser.add_argument('-curiosity_lambda', default=0.1, type=float, help='Lambda hyperparameter for curiosity module')
+parser.add_argument('-curiosity_scale', default=1e1, type=float, help='Intrinsic reward scale factor')
 
 # if simple or conv autoencoder will be included
 # important encoder_warmup_dqn_reset_steps and encoder_warmup_dqn_reset_steps_end
