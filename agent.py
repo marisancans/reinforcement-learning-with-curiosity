@@ -46,7 +46,7 @@ class Agent(nn.Module):
         self.state_max_val = self.env.observation_space.low
         self.state_min_val = self.env.observation_space.high
         self.n_actions = self.env.action_space.n
-        self.epsilon = 1.0
+        self.epsilon = self.args.epsilon_start
         logging.info('agent state ok')
 
         # --------- MODELS --------------
@@ -263,23 +263,25 @@ class Agent(nn.Module):
         return features
 
     def decode_sequence(self, target, h_vector):
+        if self.total_steps < self.args.encoder_warmup_dqn_reset_steps_end or not self.args.encoder_warmup_lock:
 
-        if self.args.encoder_type == 'simple':
-            pred = self.feature_decoder.decode_simple_features(h_vector)
-        else:
-            pred = self.feature_decoder.decode_conv_features(h_vector)
-            pred = pred.squeeze(0)
-            # debug_auto(pred, target)
+            if self.args.encoder_type == 'simple':
+                pred = self.feature_decoder.decode_simple_features(h_vector)
+            else:
+                pred = self.feature_decoder.decode_conv_features(h_vector)
+                pred = pred.squeeze(0)
+                # debug_auto(pred, target)
 
-        loss_enc = F.mse_loss(pred, target) * self.args.decoder_coeficient
-        loss_enc.backward(retain_graph=True)
+            # L1 more robust loss to avoid too big jumps in gradient
+            loss_enc = F.l1_loss(pred, target) * self.args.decoder_coeficient
+            loss_enc.backward(retain_graph=True)
 
-        #print(float(loss))
+            #print(float(loss))
 
-        self.optimizer_autoencoder.step()
-        self.optimizer_autoencoder.zero_grad()
+            self.optimizer_autoencoder.step()
+            self.optimizer_autoencoder.zero_grad()
 
-        self.e_loss_enc.append(float(loss_enc))
+            self.e_loss_enc.append(float(loss_enc))
 
     # =====    GAME LOGIC    =============
     def reset_env(self):
@@ -383,7 +385,8 @@ class Agent(nn.Module):
 
         # Pre populate memory before replay
         if self.memory.size() >= self.args.batch_size * 2:
-            self.replay()
+            for _ in range(self.args.offline_iterations):
+                self.replay()
 
         self.total_steps += 1
         self.current_step += 1
@@ -396,6 +399,10 @@ class Agent(nn.Module):
                     # resetting policy models in order to learn autencoder
                     init_parameters('dqn_model', self.dqn_model)
                     init_parameters('target_model', self.target_model)
+
+                    if self.args.is_curiosity:
+                        init_parameters('inverse_model', self.inverse_model)
+                        init_parameters('forward_model', self.forward_model)
                     # reset memory also
                     self.memory = Memory(self.args)
                     # rest optimizer

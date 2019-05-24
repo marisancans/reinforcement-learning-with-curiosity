@@ -286,7 +286,7 @@ class ConvDecoder(nn.Module):
 
 # =======           SIMPLE ENCODER       =========z
 class SimpleEncoder(nn.Module):
-    def __init__(self, args, n_states):
+    def __init__(self, args, n_states, last_states):
         super(SimpleEncoder, self).__init__()
 
         self.seq = nn.Sequential()
@@ -298,7 +298,10 @@ class SimpleEncoder(nn.Module):
                 in_features = n_states
             else:
                 in_features = prev_layer_out
-            
+
+            if idx == len(args.simple_encoder_layers) - 1:
+                out = last_states
+
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
             self.seq.add_module(f"relu_{idx}", nn.ReLU())
             
@@ -309,14 +312,7 @@ class SimpleEncoder(nn.Module):
     def forward(self, x):
         x = x.squeeze(dim=0) # squeeze batch (always must have to be batch size = 1) will use timesteps as if batch
 
-        if x.size(0) == 1: # if seq == 1 only single sample
-            out = x
-            for name, func in self.seq.named_children():
-                if "_bn" not in name:
-                    out = func(out)
-            embedding = out
-        else:
-            embedding = self.seq(x)
+        embedding = self.seq(x)
         embedding = embedding.unsqueeze(dim=0)
 
         return embedding
@@ -364,22 +360,23 @@ class FeatureEncoder():
             channels = 1 if args.is_grayscale else 3
             self.encoder = ConvEncoder(args, channels).to(self.args.device)
         else:
-            self.encoder = SimpleEncoder(args, n_states).to(self.args.device)
+            self.encoder = SimpleEncoder(args, n_states, self.args.encoding_size).to(self.args.device)
                
         # Input size to RNN is output size from encoders or state size 
         if args.encoder_type == 'conv':
             self.encoder_output_size = self.encoder.out_size
         else:
-            self.encoder_output_size = self.args.simple_encoder_layers[-1]
+            self.encoder_output_size = self.args.encoding_size
 
         self.fc_hidden_size = self.args.encoding_size
 
-        self.layer_rnn = torch.nn.GRU(
-            input_size=self.encoder_output_size,
-            hidden_size=self.fc_hidden_size,
-            num_layers=self.rnn_layers,
-            batch_first=True
-        ).to(self.args.device)
+        if self.args.n_sequence > 1:
+            self.layer_rnn = torch.nn.GRU(
+                input_size=self.encoder_output_size,
+                hidden_size=self.fc_hidden_size,
+                num_layers=self.rnn_layers,
+                batch_first=True
+            ).to(self.args.device)
 
     def reset_hidden(self, batch_size):
         self.hidden_rnn = torch.zeros(self.rnn_layers, batch_size, self.fc_hidden_size).to(self.args.device)
@@ -389,7 +386,8 @@ class FeatureEncoder():
         sequece_t = sequece_t.to(self.args.device)
         batch_size = sequece_t.shape[0]
 
-        self.reset_hidden(batch_size)
+        if self.args.n_sequence > 1:
+            self.reset_hidden(batch_size)
 
         # ===   CONV   ===
         if self.args.encoder_type == 'conv': 
@@ -406,10 +404,12 @@ class FeatureEncoder():
         else:
             sequece_t = self.encoder(sequece_t)
 
-        # ===   RNN    ===    
-        output, hidden = self.layer_rnn.forward(sequece_t, self.hidden_rnn)
-
-        output_last = output[:, -1:, :] # Take last output
+        if self.args.n_sequence > 1:
+            # ===   RNN    ===
+            output, hidden = self.layer_rnn.forward(sequece_t, self.hidden_rnn)
+            output_last = output[:, -1:, :] # Take last output
+        else:
+            output_last = sequece_t[0]
 
         embedding = F.tanh(output_last)
         embedding = torch.squeeze(embedding, 1) # Remove frames dimension
