@@ -87,7 +87,7 @@ class Agent(nn.Module):
 
         self.optimizer_agent = torch.optim.Adam(params=params, lr = self.args.learning_rate)
 
-        if self.args.encoder_type != 'nothing':
+        if self.args.encoder_type != 'nothing' and self.args.is_decoder:
             params_auto_encoder = list(self.feature_encoder.encoder.parameters()) + list(self.feature_decoder.decoder.parameters())
             self.optimizer_autoencoder = torch.optim.Adam(params=params_auto_encoder, lr = self.args.learning_rate)
 
@@ -264,7 +264,6 @@ class Agent(nn.Module):
 
     def decode_sequence(self, target, h_vector):
         if self.total_steps < self.args.encoder_warmup_dqn_reset_steps_end or not self.args.encoder_warmup_lock:
-
             if self.args.encoder_type == 'simple':
                 pred = self.feature_decoder.decode_simple_features(h_vector)
             else:
@@ -300,7 +299,8 @@ class Agent(nn.Module):
 
         if self.args.encoder_type != 'nothing': 
             state_t = self.encode_sequence_with_next_state(state_t)
-            state_t = state_t.detach()
+            if self.args.is_detach_inverse_model:
+                state_t = state_t.detach()
         
         self.current_state = state_t
 
@@ -372,8 +372,10 @@ class Agent(nn.Module):
             # Auto Encoder training
             target_state_t = next_state_t.to(self.args.device)
             next_state_t = self.encode_sequence_with_next_state(next_state_t)
-            next_state_t = next_state_t.detach()
-            self.decode_sequence(target_state_t, next_state_t)
+            if self.args.is_detach_inverse_model:
+                next_state_t = next_state_t.detach()
+            if self.args.is_decoder:
+                self.decode_sequence(target_state_t, next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
         transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]
@@ -394,7 +396,7 @@ class Agent(nn.Module):
 
         self.update_target()
 
-        if self.args.encoder_type != 'nothing':
+        if self.args.encoder_type != 'nothing' and self.args.is_decoder:
             if self.total_steps < self.args.encoder_warmup_dqn_reset_steps_end:
                 if self.total_steps % self.args.encoder_warmup_dqn_reset_steps == 0:
                     # resetting policy models in order to learn autencoder
@@ -426,7 +428,7 @@ class Agent(nn.Module):
             reward_t += loss_cos.detach() * self.args.curiosity_scale
         
         # DQN LOSS
-        loss_dqn = self.train_dqn_model(state_t, recorded_action_t, reward_t, next_state_t, done_t, importance_sampling_weight, idxs)
+        loss_dqn = self.train_dqn_model(state_t.detach(), recorded_action_t.detach(), reward_t, next_state_t.detach(), done_t, importance_sampling_weight, idxs)
 
         # LOSS
         if self.args.is_curiosity:
@@ -554,11 +556,7 @@ class Agent(nn.Module):
 
 
     def get_inverse_and_forward_loss(self, state_t, next_state_t, recorded_action_t):
-        # --------------- INVERSE MODEL -----------------------
-        trans = torch.cat((state_t, next_state_t), dim=1)
-        pred_action = self.inverse_model(trans)
 
-        loss_inverse = -torch.mean(recorded_action_t * torch.log(pred_action + 1e-12))
 
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
         cat_t = torch.cat((state_t, recorded_action_t), dim=1)
@@ -567,13 +565,11 @@ class Agent(nn.Module):
         loss_cos = F.cosine_similarity(pred_next_state_t, next_state_t, dim=1)  
         loss_cos = 1.0 - loss_cos
 
-        # DEBUGGING
-        if self.args.debug_features:
-            debug_encoded_states(pred_next_state, next_state_t)
+         # --------------- INVERSE MODEL -----------------------
+        trans = torch.cat((state_t, pred_next_state_t), dim=1)
+        pred_action = self.inverse_model(trans)
 
-        # DEBUGGING
-        if self.args.debug_images:
-            key = self.args.debug_activations[0]
-            debug_sequence(self.states_sequence, self.feature_encoder.encoder.activations[key])
-  
+        #loss_inverse = F.mse_loss(recorded_action_t, pred_action)
+        loss_inverse = -torch.mean(recorded_action_t * torch.log(pred_action + 1e-12))
+
         return loss_inverse, loss_cos

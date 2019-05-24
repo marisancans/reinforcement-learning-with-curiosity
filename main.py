@@ -33,7 +33,7 @@ parser.add_argument('-batch_size', default=32, type=int)
 
 parser.add_argument('-is_normalized_state', default=False, type=arg_to_bool, help='Normalize state vector in forward and inverse models? true | false')
 parser.add_argument('-epsilon_decay', default=1e-4, type=float, help='Epslion decay for exploration / explotation policy')
-parser.add_argument('-epsilon_floor', default=0.01, type=float, help='Where epsilon stops to decay')
+parser.add_argument('-epsilon_floor', default=0.1, type=float, help='Where epsilon stops to decay')
 parser.add_argument('-epsilon_start', default=1.0, type=float)
 parser.add_argument('-gamma', default=0.95, type=float, help='Hyperparameter for DQN')
 parser.add_argument('-n_episodes', default=500, type=int, help='Number of episodes (games) to be played')
@@ -45,9 +45,9 @@ parser.add_argument('-memory_size', default=1000, type=int, help="Replay memory 
 parser.add_argument('-prioritized_type', default='rank', help='random / proportional / rank')
 parser.add_argument('-rank_update', default=10, type=int, help='After how many steps is memory sorted(only for rank prioritization)')
 parser.add_argument('-per_e', default=0.01, type=float, help='Hyperparameter that we use to avoid some experiences to have 0 probability of being taken')
-parser.add_argument('-per_a', default=2.0, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly 0 = random ')
+parser.add_argument('-per_a', default=0.5, type=float, help='Hyperparameter that we use to make a tradeoff between taking only exp with high priority and sampling randomly 0 = random ')
 parser.add_argument('-per_b', default=0.1, type=float, help='Importance-sampling, from initial value increasing to 1')
-parser.add_argument('-per_b_anneal_to', default=1000, type=int, help='At which frame does beta anneal to 1.0')
+parser.add_argument('-per_b_anneal_to', default=10000, type=int, help='At which frame does beta anneal to 1.0')
 
 parser.add_argument('-image_scale', default=1.0, type=float, help='Image downscaling factor')
 parser.add_argument('-n_frame_skip', default=1, type=int, help='How many frames to skip, before pushing to frame stack')
@@ -55,14 +55,14 @@ parser.add_argument('-image_crop', default=0, type=int, nargs='+', help='Coordin
 parser.add_argument('-is_grayscale', default=False, type=arg_to_bool, help='Whether state image is converted from RGB to grayscale ')
 
 parser.add_argument('-is_curiosity', default=True, type=arg_to_bool)
-parser.add_argument('-curiosity_beta', default=0.5, type=float, help='Beta hyperparameter for curiosity module')
-parser.add_argument('-curiosity_lambda', default=0.1, type=float, help='Lambda hyperparameter for curiosity module')
-parser.add_argument('-curiosity_scale', default=1e1, type=float, help='Intrinsic reward scale factor')
+parser.add_argument('-is_detach_inverse_model', default=False, type=arg_to_bool)
+parser.add_argument('-curiosity_beta', default=0.5, type=float, help='Beta hyperparameter for curiosity module, how much forward important than inverse')
+parser.add_argument('-curiosity_lambda', default=0.5, type=float, help='Lambda hyperparameter for curiosity module')
+parser.add_argument('-curiosity_scale', default=1e2, type=float, help='Intrinsic reward scale factor')
 
-# if simple or conv autoencoder will be included
-# important encoder_warmup_dqn_reset_steps and encoder_warmup_dqn_reset_steps_end
+parser.add_argument('-is_decoder', default=True, type=arg_to_bool)
 parser.add_argument('-encoder_type', default='simple', nargs='?', choices=['nothing', 'simple', 'conv'], help='Which type od encoder to use, depends on game state (default: %(default)s)')
-parser.add_argument('-n_sequence', default=1, type=int, help='How many stacked states will be passed to encoder')
+parser.add_argument('-n_sequence', default=4, type=int, help='How many stacked states will be passed to encoder')
 parser.add_argument('-encoder_warmup_dqn_reset_steps', default=500, type=int) # warmup autoencoder
 parser.add_argument('-encoder_warmup_dqn_reset_steps_end', default=3000, type=int)  # warmup autoencoder
 parser.add_argument('-encoder_warmup_lock', default=False, type=arg_to_bool)
@@ -193,7 +193,7 @@ def evaluate():
             logging.info(agent.print_debug(i_episode, t))
 
         # if (i_episode + 1) % args.save_interval == 0:
-        save(agent, i_episode + 1, dir_name)
+        #save(agent, i_episode + 1, dir_name)
 
     state = agent.get_results()
     CsvUtils.add_results(args, state)

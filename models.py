@@ -411,13 +411,13 @@ class FeatureEncoder():
         else:
             output_last = sequece_t[0]
 
-        embedding = F.tanh(output_last)
+        embedding = torch.tanh(output_last)
         embedding = torch.squeeze(embedding, 1) # Remove frames dimension
 
         #L2 normalization
-        norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
-        if torch.sum(norm) != 0:
-            embedding = embedding / norm
+        # norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
+        # if torch.sum(norm) != 0:
+        #     embedding = embedding / norm
 
         return embedding
 
