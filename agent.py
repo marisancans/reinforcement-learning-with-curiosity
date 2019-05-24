@@ -5,7 +5,6 @@ import torchvision.models as models
 
 from modules.torch_utils import init_parameters
 from modules.torch_utils import to_numpy
-from modules.opencv_utils import debug_encoded_states, debug_sequence, debug_auto
 
 import random, gym, os, cv2, time, logging
 from gym import envs
@@ -86,9 +85,8 @@ class Agent(nn.Module):
 
         self.optimizer_agent = torch.optim.Adam(params=params, lr = self.args.learning_rate)
 
-        if self.args.prioritized_type != 'nothing':
+        if self.args.encoder_type != 'nothing':
             params_auto_encoder = list(self.feature_encoder.encoder.parameters()) + list(self.feature_decoder.decoder.parameters())
-
             self.optimizer_autoencoder = torch.optim.Adam(params=params_auto_encoder, lr = self.args.learning_rate)
 
         logging.info('agent optimizer and params ok')
@@ -251,7 +249,7 @@ class Agent(nn.Module):
         sequence_t = torch.squeeze(sequence_t, 0) # Remove batch dim
         return sequence_t
 
-    def get_next_sequence(self, next_state_t):    
+    def encode_sequence_with_next_state(self, next_state_t):
         if self.args.is_grayscale:
             next_state_t = next_state_t.unsqueeze(0)
 
@@ -271,9 +269,9 @@ class Agent(nn.Module):
             # debug_auto(pred, truth)  
             
         loss = mse(pred, truth) * self.args.decoder_coeficient
-        loss.backward()
+        loss.backward(retain_graph=True)
 
-        # print(float(loss))
+        #print(float(loss))
         
         self.optimizer_autoencoder.step()
         self.optimizer_autoencoder.zero_grad()
@@ -294,7 +292,8 @@ class Agent(nn.Module):
             state_t = torch.FloatTensor(state)
 
         if self.args.encoder_type != 'nothing': 
-            state_t = self.get_next_sequence(state_t)
+            state_t = self.encode_sequence_with_next_state(state_t)
+            state_t = state_t.detach()
         
         self.current_state = state_t
 
@@ -360,10 +359,10 @@ class Agent(nn.Module):
         reward_t = torch.FloatTensor([reward]).to(self.args.device)
 
         if self.args.encoder_type != 'nothing':
-            truth = next_state_t.to(self.args.device)
-            next_state_t = self.get_next_sequence(next_state_t)
-
-            # self.decode_sequence(truth, next_state_t)
+            # Auto Encoder training
+            target_state_t = next_state_t.to(self.args.device)
+            next_state_t = self.encode_sequence_with_next_state(next_state_t)
+            self.decode_sequence(target_state_t, next_state_t)
 
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
         transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]
@@ -441,7 +440,7 @@ class Agent(nn.Module):
             
 
     def backprop(self, loss):
-        loss.backward()
+        loss.backward(retain_graph=True)
         self.optimizer_agent.step()
         self.optimizer_agent.zero_grad()
 

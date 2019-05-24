@@ -302,7 +302,7 @@ class SimpleEncoder(nn.Module):
                 in_features = prev_layer_out
             
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
-            self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
+            #self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
             
             if idx < len(args.simple_encoder_layers) - 1:
                 self.seq.add_module(f"relu_{idx}", nn.ReLU())
@@ -312,7 +312,7 @@ class SimpleEncoder(nn.Module):
         init_parameters('simple encoder', self)
 
     def forward(self, x):
-        x = x.squeeze(dim=0)
+        x = x.squeeze(dim=0) # squeeze batch (always must have to be batch size = 1) will use timesteps as if batch
 
         if x.size(0) == 1: # if seq == 1 only single sample
             out = x
@@ -322,15 +322,8 @@ class SimpleEncoder(nn.Module):
             embedding = out
         else:
             embedding = self.seq(x)
-
-        embedding = F.tanh(embedding)
         embedding = embedding.unsqueeze(dim=0)
 
-        #L2 normalization
-        # norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
-        # if torch.sum(norm) != 0:
-            # embedding = embedding / norm
-        
         return embedding
 
 
@@ -340,8 +333,9 @@ class SimpleDecoder(nn.Module):
         super(SimpleDecoder, self).__init__()
 
         self.seq = nn.Sequential()
+        self.args = args
 
-        for idx, out in enumerate(args.simple_encoder_layers[::-1]): # Reversed
+        for idx, out in enumerate(reversed(args.simple_encoder_layers)):
             if idx == 0:
                 in_features = first_layer_in
             else:
@@ -351,7 +345,7 @@ class SimpleDecoder(nn.Module):
                 out = last_layer_out 
             
             self.seq.add_module(f"linear_{idx}", torch.nn.Linear(in_features=in_features, out_features=out))
-            self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
+            #self.seq.add_module(f"layer_{idx}_bn", torch.nn.BatchNorm1d(num_features=out))
             
             if idx < len(args.simple_encoder_layers) - 1:
                 self.seq.add_module(f"relu_{idx}", nn.ReLU())
@@ -420,11 +414,17 @@ class FeatureEncoder():
         # ===   RNN    ===    
         output, hidden = self.layer_rnn(sequece_t, (self.hidden_rnn, self.state_rnn))
 
-        output = output[:, -1:, :] # Take last output
-        output = torch.squeeze(output, 1) # Remove frames dimension 
-            
-        output = output.detach()# Detach, so that replay memory doesnt save computated graphs
-        return output
+        output_last = output[:, -1:, :] # Take last output
+
+        embedding = F.tanh(output_last)
+        embedding = torch.squeeze(embedding, 1) # Remove frames dimension
+
+        #L2 normalization
+        norm = torch.norm(embedding.detach(), p=2, dim=1, keepdim=True)
+        if torch.sum(norm) != 0:
+            embedding = embedding / norm
+
+        return embedding
 
 
 
@@ -435,8 +435,10 @@ class FeatureDecoder():
         else:
             self.decoder = ConvDecoder(args, encoder_features=encoder_out, original_shape=original_shape).to(args.device)
 
-    def decode_simple_features(self, h_vector):       
-        pred = self.decoder(stacked_h)
+    def decode_simple_features(self, h_vector):
+        h_vector = h_vector.unsqueeze(0)
+        pred = self.decoder.forward(h_vector)
+        pred = pred.squeeze(0)
         return pred
 
     def decode_conv_features(self, h_vector):
