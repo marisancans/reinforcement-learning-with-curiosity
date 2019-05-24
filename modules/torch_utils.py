@@ -33,7 +33,7 @@ def init_parameters(model_name, model):
                 else:
                     torch.nn.init.uniform_(param)
 
-    logging.info(f'model: {model_name}  |  total_param_size: {total_param_size}')
+    #logging.info(f'model: {model_name}  |  total_param_size: {total_param_size}')
     return model
 
 

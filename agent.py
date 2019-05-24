@@ -1,3 +1,5 @@
+import collections
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -100,6 +102,7 @@ class Agent(nn.Module):
 
         # ----- TRAINING BUFFER --------
         self.loss_dqn = []
+        self.loss_enc = []
         self.ers = []
 
         if self.args.is_curiosity:
@@ -110,6 +113,7 @@ class Agent(nn.Module):
 
         # ----- EPISODE BUFFER  --------
         self.e_loss_dqn = []
+        self.e_loss_enc = []
         self.e_reward = []
 
         if self.args.is_curiosity:
@@ -268,13 +272,15 @@ class Agent(nn.Module):
             pred = pred.squeeze(0)
             # debug_auto(pred, truth)  
             
-        loss = mse(pred, truth) * self.args.decoder_coeficient
-        loss.backward(retain_graph=True)
+        loss_enc = mse(pred, truth) * self.args.decoder_coeficient
+        loss_enc.backward(retain_graph=True)
 
         #print(float(loss))
         
         self.optimizer_autoencoder.step()
         self.optimizer_autoencoder.zero_grad()
+
+        self.e_loss_enc.append(float(loss_enc))
 
     # =====    GAME LOGIC    =============
     def reset_env(self):
@@ -297,6 +303,7 @@ class Agent(nn.Module):
         
         self.current_state = state_t
 
+        self.loss_enc.clear()
         self.e_loss_dqn.clear()
         self.e_reward .clear()
 
@@ -372,7 +379,6 @@ class Agent(nn.Module):
 
     def end_step(self, reward):
         self.e_reward.append(reward)
-        self.update_target()
 
         # Pre populate memory before replay
         if self.memory.size() >= self.args.batch_size * 2:
@@ -380,6 +386,18 @@ class Agent(nn.Module):
 
         self.total_steps += 1
         self.current_step += 1
+
+        self.update_target()
+
+        if self.total_steps < self.args.encoder_warmup_dqn_reset_steps_end:
+            if self.total_steps % self.args.encoder_warmup_dqn_reset_steps == 0:
+                # resetting policy models in order to learn autencoder
+                init_parameters('dqn_model', self.dqn_model)
+                init_parameters('target_model', self.target_model)
+                # reset memory also
+                self.memory = Memory(self.args)
+                # rest optimizer
+                self.optimizer_agent.state = collections.defaultdict(dict)
     
     def replay(self):     
         minibatch, idxs, importance_sampling_weight = self.memory.get_batch(self.args.batch_size)
@@ -405,17 +423,18 @@ class Agent(nn.Module):
             loss = loss_dqn
         
         loss = loss.mean()
+        self.backprop(loss)
 
         self.remember_episode(loss_dqn)
 
         if self.args.is_curiosity:
             self.remember_episode_curious(loss_cos, loss_inv, loss)
 
-        self.backprop(loss)
-
     def terminal_episode(self):
         dqn_avg = average(self.e_loss_dqn)
         self.loss_dqn.append(dqn_avg)
+        loss_enc = average(self.e_loss_enc)
+        self.loss_enc.append(loss_enc)
         self.ers.append(sum(self.e_reward))
         self.current_episode += 1
 
@@ -457,8 +476,9 @@ class Agent(nn.Module):
     def print_debug(self, i_episode, exec_time):
         if self.args.debug:
             dqn_loss = self.loss_dqn[-1] if self.loss_dqn else 0
+            enc_loss = self.loss_enc[-1] if self.loss_enc else 0
             ers = sum(self.e_reward)
-            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} | mem: {self.memory.size()}"
+            info = f"i_episode: {i_episode} | epsilon: {self.epsilon:.4f} |  dqn:  {dqn_loss:.4f} | enc:  {enc_loss:.4f} | ers:  {ers:.2f} | time: {exec_time:.2f} | mem: {self.memory.size()}"
 
             if self.args.prioritized_type != 'random':
                 info += f' | per_b: {self.memory.mem.per_b:.2f}'
@@ -478,6 +498,7 @@ class Agent(nn.Module):
         d['score_avg'] = average(self.ers)
         d['score_best'] = max(self.ers)
         d['loss'] = average(self.e_loss_dqn)
+        d['loss_enc'] = average(self.e_loss_enc)
         d['per_a'] = self.args.per_a
         d['per_b'] = self.args.per_b
 
@@ -506,10 +527,9 @@ class Agent(nn.Module):
 
         Q_cur_t = self.dqn_model(state_t)
         Q_cur_t = Q_cur_t * recorded_action_t 
-        Q_cur_t = torch.sum(Q_cur_t, dim=1) # gets rid of zeros
+        Q_cur_t = torch.sum(Q_cur_t, dim=1) # reduce dimension (zeros are not selected values)
 
-        mse = nn.MSELoss(reduction='none') # REDUCTION PARAMETER!
-        loss_dqn = mse(Q_cur_t, Q_next_t)
+        loss_dqn = F.mse_loss(Q_cur_t, Q_next_t, reduction='none')
 
         # # PER
         if self.args.prioritized_type != 'random':
