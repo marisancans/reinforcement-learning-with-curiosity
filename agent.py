@@ -377,9 +377,25 @@ class Agent(nn.Module):
             if self.args.is_decoder:
                 self.decode_sequence(target_state_t, next_state_t)
 
+
+        # CURIOSITY
+        if self.args.is_curiosity:
+            
+            loss_inv, loss_cos = self.get_inverse_and_forward_loss(self.current_state, next_state_t, act_vector_t)  
+            reward_t += loss_cos.detach() * self.args.curiosity_scale
+            loss = loss_inv*(1-self.args.curiosity_beta)+self.args.curiosity_beta*loss_cos+self.args.curiosity_lambda#*loss_dqn
+            loss.backward()
+            self.optimizer_agent.step()
+            self.optimizer_agent.zero_grad()
+        
+            self.remember_episode_curious(loss_cos, loss_inv, loss)
+
         t = torch.FloatTensor([0.0 if is_terminal else 1.0]).to(self.args.device)
         transition = [self.current_state, act_vector_t, reward_t, next_state_t, t]
         self.memory.add(transition)
+
+
+        
 
         self.current_state = next_state_t
 
@@ -422,27 +438,12 @@ class Agent(nn.Module):
         next_state_t = torch.stack([x[3] for x in minibatch])
         done_t = torch.cat([x[4] for x in minibatch])
 
-        # CURIOSITY LOSS
-        if self.args.is_curiosity:
-            loss_inv, loss_cos = self.get_inverse_and_forward_loss(state_t, next_state_t, recorded_action_t)  
-            reward_t += loss_cos.detach() * self.args.curiosity_scale
-        
         # DQN LOSS
-        loss_dqn = self.train_dqn_model(state_t.detach(), recorded_action_t.detach(), reward_t, next_state_t.detach(), done_t, importance_sampling_weight, idxs)
-
-        # LOSS
-        if self.args.is_curiosity:
-            loss = loss_inv*(1-self.args.curiosity_beta)+self.args.curiosity_beta*loss_cos+self.args.curiosity_lambda*loss_dqn
-        else:
-            loss = loss_dqn
+        loss = self.train_dqn_model(state_t.detach(), recorded_action_t.detach(), reward_t, next_state_t.detach(), done_t, importance_sampling_weight, idxs)
         
         loss = loss.mean()
         self.backprop(loss)
-
-        self.remember_episode(loss_dqn)
-
-        if self.args.is_curiosity:
-            self.remember_episode_curious(loss_cos, loss_inv, loss)
+        self.remember_episode(loss)
 
     def terminal_episode(self):
         dqn_avg = average(self.e_loss_dqn)
@@ -467,9 +468,7 @@ class Agent(nn.Module):
     def remember_episode_curious(self, loss_cos, loss_inv, loss_com):
         self.e_loss_inverse.append(float(loss_inv))
         self.e_loss_combined.append(float(loss_com))
-
-        loss_cos_avg = average(to_numpy(loss_cos))
-        self.e_cos_distance.append(float(loss_cos_avg))
+        self.e_cos_distance.append(float(loss_cos))
             
 
     def backprop(self, loss):
@@ -515,6 +514,7 @@ class Agent(nn.Module):
         d['loss_enc'] = average(self.e_loss_enc)
         d['per_a'] = self.args.per_a
         d['per_b'] = self.args.per_b
+        d['simple_encoder_layers'] = 'FIX ME' # saves in wrong format if arguments are lists
 
         if self.args.is_curiosity:
             d['loss_inverse'] = average(self.loss_inverse)
@@ -559,15 +559,15 @@ class Agent(nn.Module):
 
 
         # --------------- FORWARD MODEL / CURIOSITY -------------------------
-        cat_t = torch.cat((state_t, recorded_action_t), dim=1)
+        cat_t = torch.cat((state_t, recorded_action_t), dim=0)
 
         pred_next_state_t = self.forward_model(cat_t)
-        loss_cos = F.cosine_similarity(pred_next_state_t, next_state_t, dim=1)  
+        loss_cos = F.cosine_similarity(pred_next_state_t, next_state_t, dim=0)  
         loss_cos = 1.0 - loss_cos
 
          # --------------- INVERSE MODEL -----------------------
-        trans = torch.cat((state_t, pred_next_state_t), dim=1)
-        pred_action = self.inverse_model(trans)
+        trans = torch.cat((state_t, pred_next_state_t), dim=0).unsqueeze(0)
+        pred_action = self.inverse_model(trans).squeeze(0)
 
         #loss_inverse = F.mse_loss(recorded_action_t, pred_action)
         loss_inverse = -torch.mean(recorded_action_t * torch.log(pred_action + 1e-12))

@@ -71,9 +71,10 @@ parser.add_argument('-encoding_size', type=int, default=4)
 parser.add_argument('-models_layer_count', type=int, default=2, help='Hidden layer count for inverse / forward / dqn / simple encoder models')
 parser.add_argument('-models_layer_features', type=int, default=16, help='Hidden layer FEATURE count for inverse / forward / dqn / simple encoder models')
 parser.add_argument('-simple_encoder_layers', type=int, default=[16, 8], nargs="+", help='How many outputs per each layer e.g. 256 64 32')
+parser.add_argument('-simple_encoder_compression', type=float, default=0.5, help='By what factor are encoder layers reduced. Example: if state is 20 features and we have 3 layers, encoder layers will be 20->10, 10->5, 5->3(3 will be z vector size)')
 parser.add_argument('-rnn_layers', type=int, default=1, help='How many hidden layers in LSTM')
 
-parser.add_argument('-conv_encoder_layer_out', default=1024, type=int)
+parser.add_argument('-conv_encoder_layer_out', default=1024, type=int) # NOT fully implemented
 parser.add_argument('-render_xvfb', default=False, type=arg_to_bool, help='wether to render games like cart pole as an image')
 
 parser.add_argument('-is_ddqn', type=arg_to_bool, default=True, help='Is double DQN enabled?')
@@ -99,7 +100,8 @@ tmp = [
     'loss_enc',
     'loss_inverse',
     'loss_forward', 
-    'cosine_distance'
+    'cosine_distance',
+    'simple_encoder_layers'
 ]
 if not args.params_report is None:
     for it in reversed(args.params_report):
@@ -130,7 +132,7 @@ CsvUtils.create_local(args)
 
 if args.render_xvfb:
     display = Display(visible=0, size=(1400, 900))
-    display.start()
+    # display.start()
 
 
     

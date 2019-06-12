@@ -4,7 +4,7 @@ class ArgsUtils(object):
     @staticmethod
     def log_args(args, script, logging_utils):
         cmd = []
-        for arg in vars(args):
+        for arg in dict(sorted(vars(args).items())): # Keys are alphabetically ordered
             key = arg
             value = getattr(args, arg)
             if isinstance(value, list):
